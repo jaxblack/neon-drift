@@ -1,0 +1,23 @@
+{
+  "name": "neon-drift",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "浏览器 3D 竞速游戏 — 对标 QQ飞车（漂移集气/连喷/氮气）+ 马里奥赛车（道具）",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit",
+    "server": "node server/index.mjs"
+  },
+  "dependencies": {
+    "three": "^0.185.1",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/three": "^0.185.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}

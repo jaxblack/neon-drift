@@ -124,6 +124,8 @@ export class TouchControls {
   private throttle = 0;
   private brake = 0;
 
+  /** 摇杆满舵半径（px），跟随窗口尺寸，避免在 pointermove 里反复读 layout */
+  private stickRadius = 72;
   private stickPointer: number | null = null;
   private stickOriginX = 0;
   private stickOriginY = 0;
@@ -139,6 +141,10 @@ export class TouchControls {
     this.throttleBtn = document.getElementById('tb-throttle') as HTMLElement;
 
     this.gyro.setRange(settings.gyroRange);
+    this.updateStickRadius();
+    const onResize = () => this.updateStickRadius();
+    window.addEventListener('resize', onResize);
+    this.detach.push(() => window.removeEventListener('resize', onResize));
     this.bindStick();
     this.bindButton('tb-throttle', 'throttle');
     this.bindButton('tb-brake', 'brake');
@@ -227,7 +233,7 @@ export class TouchControls {
     const move = (e: PointerEvent) => {
       if (e.pointerId !== this.stickPointer) return;
       e.preventDefault();
-      const radius = Math.min(96, Math.max(56, window.innerWidth * 0.11));
+      const radius = this.stickRadius;
       const dx = clamp((e.clientX - this.stickOriginX) / radius, -1, 1);
       // 手指上下滑动时慢慢把原点跟过去，长时间拖动不会「跑偏」
       const dy = e.clientY - this.stickOriginY;
@@ -259,9 +265,12 @@ export class TouchControls {
     this.moveKnob(0);
   }
 
+  private updateStickRadius(): void {
+    this.stickRadius = Math.min(96, Math.max(56, window.innerWidth * 0.11));
+  }
+
   private moveKnob(v: number): void {
-    const radius = Math.min(96, Math.max(56, window.innerWidth * 0.11));
-    this.knob.style.transform = `translate(calc(-50% + ${v * radius * 0.55}px), -50%)`;
+    this.knob.style.transform = `translate(calc(-50% + ${v * this.stickRadius * 0.55}px), -50%)`;
   }
 
   /** 按住型按钮：throttle/brake 走模拟轴，其余走虚拟按键 */

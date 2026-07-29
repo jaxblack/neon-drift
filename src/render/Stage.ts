@@ -366,6 +366,11 @@ export class Stage {
       const target = clamp((spdN - 0.66) / 0.5, 0, 1) * 0.4 + boostN * 0.6;
       u.uIntensity.value = damp(u.uIntensity.value as number, target, 8, dt);
       u.uAberration.value = damp(u.uAberration.value as number, target * 0.9, 8, dt);
+      // 运动模糊比速度线来得早：巡航速度就该有一点点拉伸，喷射时拉满。
+      // 全程给一点漂移权重，甩尾时画面跟着糊一下，侧滑的失控感强很多。
+      const blurTarget = clamp((spdN - 0.42) / 0.55, 0, 1) * 0.55
+        + boostN * 0.75 + this.driftBlend * this.slipSmooth * 0.3;
+      u.uBlur.value = damp(u.uBlur.value as number, blurTarget, 6, dt);
       u.uTime.value = (u.uTime.value as number) + dt;
       const tint = u.uTint.value as THREE.Color;
       tint.lerp(new THREE.Color(kart.boostKind === 'nitro' ? 0xff6fd8 : 0x8fdcff), 0.08);

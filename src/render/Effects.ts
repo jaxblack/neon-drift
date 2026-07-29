@@ -226,6 +226,8 @@ export const SpeedLinesShader = {
     uTime: { value: 0 },
     uAberration: { value: 0 },
     uTint: { value: new THREE.Color(0x66ccff) },
+    /** 径向运动模糊强度，和速度/加速分开控 */
+    uBlur: { value: 0 },
   },
   vertexShader: /* glsl */`
     varying vec2 vUv;
@@ -238,6 +240,7 @@ export const SpeedLinesShader = {
     uniform float uIntensity;
     uniform float uTime;
     uniform float uAberration;
+    uniform float uBlur;
     uniform vec3  uTint;
     varying vec2 vUv;
 
@@ -255,6 +258,23 @@ export const SpeedLinesShader = {
       col.r = texture2D(tDiffuse, vUv + dir * ab).r;
       col.g = texture2D(tDiffuse, vUv).g;
       col.b = texture2D(tDiffuse, vUv - dir * ab).b;
+
+      // --- 径向运动模糊 ---
+      // 速度线是"画上去"的装饰，真正让人感到在飞的是画面本身沿视线方向被拉开。
+      // 沿着到画面中心的方向做几次降权采样即可，中心保持锐利（视觉焦点），
+      // 越靠边拉得越长。8 次采样在移动端也扛得住。
+      if (uBlur > 0.001) {
+        float amt = uBlur * smoothstep(0.06, 0.62, r) * 0.055;
+        vec3 acc = col;
+        float wsum = 1.0;
+        for (int i = 1; i <= 8; i++) {
+          float t = float(i) / 8.0;
+          float w = 1.0 - t;
+          acc += texture2D(tDiffuse, vUv - c * amt * t).rgb * w;
+          wsum += w;
+        }
+        col = acc / wsum;
+      }
 
       // --- 径向速度线 ---
       if (uIntensity > 0.001) {

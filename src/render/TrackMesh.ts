@@ -445,18 +445,32 @@ function buildEnvironment(track: Track): { obj: THREE.Object3D; disposables: Arr
       g.add(inst);
     }
   } else if (theme.env === 'city') {
+    // 天际线。
+    //
+    // 之前是 200 个等比缩放的方盒子，每个都是"一根柱子 + 窗格贴图"，
+    // 远看就是一排高矮不同的黑砖，完全没有城市的层次。
+    // 现在改成三层：主楼 / 退台（压在主楼上的小一号体块）/ 楼顶竖向霓虹条，
+    // 三层各自一个 InstancedMesh，仍然只有 3 个 draw call。
     const geo = new THREE.BoxGeometry(1, 1, 1);
     const tex = makeBuildingTexture();
     const mat = new THREE.MeshStandardMaterial({
       map: tex, emissiveMap: tex, emissive: 0xffffff, emissiveIntensity: 0.9,
       color: 0x0a0c18, roughness: 0.85,
     });
-    d.push(geo, tex, mat);
-    const N = 200;
+    // 楼顶霓虹：不吃光照，直接发光，负责在天际线上戳出亮点
+    const neonGeo = new THREE.BoxGeometry(1, 1, 1);
+    const neonMat = new THREE.MeshBasicMaterial({ toneMapped: false, vertexColors: true });
+    d.push(geo, tex, mat, neonGeo, neonMat);
+
+    const N = 190;
     const inst = new THREE.InstancedMesh(geo, mat, N);
+    const setback = new THREE.InstancedMesh(geo, mat, N);
+    const neon = new THREE.InstancedMesh(neonGeo, neonMat, N);
     const m4 = new THREE.Matrix4();
     const q = new THREE.Quaternion();
-    let n = 0;
+    const col = new THREE.Color();
+    const NEON_COLORS = [0xff3d8b, 0x2fe0ff, 0xffc93f, 0x8b5cff, 0x39ffa0];
+    let n = 0, ns = 0, nn = 0;
     for (let i = 0; i < N * 3 && n < N; i++) {
       const dist = rng() * track.length;
       const s = track.sampleAt(dist);
@@ -465,13 +479,45 @@ function buildEnvironment(track: Track): { obj: THREE.Object3D; disposables: Arr
       const x = s.x + s.lx * off, z = s.z + s.lz * off;
       const w = 14 + rng() * 26;
       const h = 30 + rng() * 110;
-      q.setFromEuler(new THREE.Euler(0, rng() * TAU, 0));
-      m4.compose(new THREE.Vector3(x, s.y - 8 + h / 2, z), q, new THREE.Vector3(w, h, w * (0.7 + rng() * 0.6)));
+      const depth = w * (0.7 + rng() * 0.6);
+      const rot = rng() * TAU;
+      q.setFromEuler(new THREE.Euler(0, rot, 0));
+      const baseY = s.y - 8;
+      m4.compose(new THREE.Vector3(x, baseY + h / 2, z), q, new THREE.Vector3(w, h, depth));
       inst.setMatrixAt(n++, m4);
+
+      // 一半的楼加一层退台，天际线才有起伏而不是一排平顶
+      if (rng() < 0.55) {
+        const sh = h * (0.18 + rng() * 0.3);
+        const sw = w * (0.5 + rng() * 0.22);
+        m4.compose(
+          new THREE.Vector3(x, baseY + h + sh / 2, z), q,
+          new THREE.Vector3(sw, sh, depth * (0.5 + rng() * 0.22)),
+        );
+        setback.setMatrixAt(ns++, m4);
+      }
+
+      // 高楼顶上插一根竖向霓虹灯管
+      if (h > 70 && rng() < 0.7) {
+        const nh = 6 + rng() * 14;
+        m4.compose(
+          new THREE.Vector3(x, baseY + h + nh / 2, z), q,
+          new THREE.Vector3(1.2, nh, 1.2),
+        );
+        neon.setMatrixAt(nn, m4);
+        col.setHex(NEON_COLORS[Math.floor(rng() * NEON_COLORS.length)]);
+        neon.setColorAt(nn, col);
+        nn++;
+      }
     }
     inst.count = n;
+    setback.count = ns;
+    neon.count = nn;
     inst.instanceMatrix.needsUpdate = true;
-    g.add(inst);
+    setback.instanceMatrix.needsUpdate = true;
+    neon.instanceMatrix.needsUpdate = true;
+    if (neon.instanceColor) neon.instanceColor.needsUpdate = true;
+    g.add(inst, setback, neon);
   } else if (theme.env === 'coast') {
     // 海面
     const geo = new THREE.PlaneGeometry(7000, 7000, 1, 1);

@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { Kart } from '../physics/Kart';
 import { KART } from '../core/Config';
 import { clamp, damp } from '../core/MathUtil';
-import { makeGlowTexture, makeHeadlightTexture } from './Textures';
+import { makeGlowTexture, makeHeadlightTexture, makeTailReflectTexture } from './Textures';
 
 /** 集气档位对应的火花/尾焰颜色 —— 蓝 → 紫 → 金，一眼看出攒了多少 */
 export const TIER_COLORS = [0x9fd8ff, 0x3ba9ff, 0xb06bff, 0xffc93f];
@@ -48,7 +48,10 @@ function loftBody(sections: Section[]): THREE.BufferGeometry {
       const b = i * RING_P + ((j + 1) % RING_P);
       const c = a + RING_P;
       const d = b + RING_P;
-      idx.push(a, c, b, b, c, d);
+      // 绕序必须让法线朝外。写反了的话车看着还是车（看到的是远端内壁），
+      // 但近端表面被背面剔除，于是包在车体里的轮子会直接透出来，
+      // 看上去就像轮子挂在车外面。
+      idx.push(a, b, c, b, d, c);
     }
   }
   // 封头封尾
@@ -58,8 +61,8 @@ function loftBody(sections: Section[]): THREE.BufferGeometry {
   const capEnd = pos.length / 3;
   pos.push(0, sN.y, sN.z);
   for (let j = 0; j < RING_P; j++) {
-    idx.push(capStart, (j + 1) % RING_P, j);
-    idx.push(capEnd, (S - 1) * RING_P + j, (S - 1) * RING_P + ((j + 1) % RING_P));
+    idx.push(capStart, j, (j + 1) % RING_P);
+    idx.push(capEnd, (S - 1) * RING_P + ((j + 1) % RING_P), (S - 1) * RING_P + j);
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
@@ -98,7 +101,7 @@ function loftGreenhouse(sections: Section[], from: number, to: number): THREE.Bu
   for (let i = 0; i < used.length - 1; i++) {
     for (let j = 0; j < P - 1; j++) {
       const a = i * P + j, b = a + 1, c = a + P, d = c + 1;
-      idx.push(a, c, b, b, c, d);
+      idx.push(a, b, c, b, d, c);
     }
   }
   const g = new THREE.BufferGeometry();
@@ -190,6 +193,7 @@ let shared: {
   driftFlame: THREE.BufferGeometry;
   glowTex: THREE.Texture;
   headlightTex: THREE.Texture;
+  tailReflectTex: THREE.Texture;
   tireMat: THREE.MeshStandardMaterial;
   darkMat: THREE.MeshStandardMaterial;
   chromeMat: THREE.MeshStandardMaterial;
@@ -221,6 +225,7 @@ function getShared() {
     driftFlame: new THREE.ConeGeometry(0.30, 1.25, 8, 1, true),
     glowTex: makeGlowTexture(),
     headlightTex: makeHeadlightTexture(),
+    tailReflectTex: makeTailReflectTexture(),
     tireMat: new THREE.MeshStandardMaterial({ color: 0x14161f, roughness: 0.95, metalness: 0.02 }),
     darkMat: new THREE.MeshStandardMaterial({ color: 0x0d1018, roughness: 0.45, metalness: 0.7 }),
     chromeMat: new THREE.MeshStandardMaterial({
@@ -234,11 +239,12 @@ function getShared() {
     canopyMat: new THREE.MeshPhysicalMaterial({
       // 夜景里的车窗实际上看不到车内，就是一块反天光的深色镜面。
       // 用 transmission 反而会把它变淡变糊，直接上高反射 + 清漆。
-      color: 0x080e1a, roughness: 0.03, metalness: 0.4,
-      // 不能太透：玻璃一透就能看见对侧车轮和车内的空腔，穿帮很明显
-      transparent: true, opacity: 0.97,
+      // 但底色不能压到接近纯黑：环境本身就暗，再黑就成了一个洞而不是玻璃，
+      // 所以抬一点底色并把环境反射强度拉高，让它至少能映出天空和霓虹。
+      color: 0x1b2740, roughness: 0.05, metalness: 0.25,
+      transparent: true, opacity: 0.95,
       clearcoat: 1, clearcoatRoughness: 0.02,
-      envMapIntensity: 2.6, side: THREE.DoubleSide,
+      envMapIntensity: 3.4, side: THREE.DoubleSide,
     }),
   };
   shared.wheel.rotateZ(Math.PI / 2);
@@ -270,6 +276,8 @@ export class KartVisual {
   /** 车头灯打在路面上的光斑 */
   private headBeam: THREE.Mesh;
   private headBeamMat: THREE.MeshBasicMaterial;
+  /** 尾灯在湿路面上的倒影 */
+  private tailReflectMat: THREE.MeshBasicMaterial;
   private baseColor: THREE.Color;
   private nameSprite?: THREE.Sprite;
   private bodyMat: THREE.MeshPhysicalMaterial;
@@ -324,7 +332,7 @@ export class KartVisual {
     wing.position.set(0, 0.92, -1.94);
     wing.rotation.x = -0.18;
     this.root.add(wing);
-    const wingUpper = new THREE.Mesh(S.wingUpper, this.hubMat);
+    const wingUpper = new THREE.Mesh(S.wingUpper, S.darkMat);
     wingUpper.position.set(0, 0.99, -2.04);
     wingUpper.rotation.x = -0.24;
     this.root.add(wingUpper);
@@ -412,6 +420,22 @@ export class KartVisual {
     this.headBeam.renderOrder = 1;
     this.root.add(this.headBeam);
 
+    // 尾灯在湿路面上的倒影。夜景赛车里跟在别人车后时，路面上那两道抖动的红光
+    // 是"路是湿的、车是亮的"最直接的证据，成本却只有一个贴片。
+    const reflGeo = new THREE.PlaneGeometry(2.3, 6.4);
+    reflGeo.rotateX(-Math.PI / 2);
+    reflGeo.rotateY(Math.PI); // 贴片的"近端"要朝车尾
+    reflGeo.translate(0, 0, -5.4);
+    this.tailReflectMat = new THREE.MeshBasicMaterial({
+      map: S.tailReflectTex, transparent: true, opacity: 0.4,
+      blending: THREE.AdditiveBlending, depthWrite: false, toneMapped: true,
+    });
+    this.owned.push(reflGeo, this.tailReflectMat);
+    const refl = new THREE.Mesh(reflGeo, this.tailReflectMat);
+    refl.position.y = 0.04;
+    refl.renderOrder = 1;
+    this.root.add(refl);
+
     // 车底辉光：贴地光斑（不能用 Sprite，它会面向相机把整台车糊住）
     this.baseColor = color.clone();
     const ugGeo = new THREE.PlaneGeometry(3.6, 5.2);
@@ -479,6 +503,11 @@ export class KartVisual {
       this.root.rotateZ(kart.impactSide * r * 0.16);
       this.root.rotateX(-r * 0.09);
     }
+
+    // 尾灯倒影：离地时收掉（车都飞起来了还在路上留倒影很出戏），喷射时更亮
+    this.tailReflectMat.opacity = kart.grounded
+      ? 0.34 + (kart.boostTime > 0 ? 0.24 : 0)
+      : 0;
 
     // 车轮：滚动 + 前轮转向（steerVisual 正 = 向右，而 rotateY 正 = 向左，所以取反）
     const spin = kart.wheelSpin;

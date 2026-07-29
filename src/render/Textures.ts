@@ -391,6 +391,38 @@ export function makeRockTexture(base: number): THREE.Texture {
   return t;
 }
 
+/**
+ * 车尾灯在湿路面上的倒影。
+ *
+ * 真做反射要么镜像渲染一遍场景、要么上 SSR，对这个体量的项目都不划算。
+ * 夜里看车尾倒影，眼睛真正读到的就是"车后两道被拉长、抖动着的光带"，
+ * 所以直接画两条竖streak，越远越淡越散——观感上足够了。
+ */
+export function makeTailReflectTexture(): THREE.Texture {
+  const W = 128, H = 256;
+  const { c, g } = canvas(W, H);
+  g.clearRect(0, 0, W, H);
+  for (let y = 0; y < H; y++) {
+    const t = y / (H - 1); // 0 = 贴近车尾，1 = 拖到最远
+    // 近端最亮，往远处衰减；最开头几行渐入，避免车底下一条硬边
+    const a = Math.pow(1 - t, 2.2) * (t < 0.05 ? t / 0.05 : 1);
+    if (a <= 0.002) continue;
+    // 倒影越远越散
+    const spread = 5 + t * 26;
+    for (const cx of [W * 0.31, W * 0.69]) {
+      const grad = g.createLinearGradient(cx - spread, 0, cx + spread, 0);
+      grad.addColorStop(0, 'rgba(255,60,72,0)');
+      grad.addColorStop(0.5, `rgba(255,72,86,${(a * 0.9).toFixed(3)})`);
+      grad.addColorStop(1, 'rgba(255,60,72,0)');
+      g.fillStyle = grad;
+      g.fillRect(cx - spread, y, spread * 2, 1);
+    }
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
 export function makeGlowTexture(): THREE.Texture {
   const N = 128;
   const { c, g } = canvas(N, N);

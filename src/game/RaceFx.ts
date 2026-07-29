@@ -32,7 +32,7 @@ export class RaceFx {
     if (k.drifting && k.grounded && k.speed > 12) {
       const tier = k.driftTier;
       const color = TIER_COLORS[tier];
-      const rate = 32 + tier * 26 + k.slip * 45;
+      const rate = 48 + tier * 40 + k.slip * 70;
       let acc = (this.driftAcc.get(id) ?? 0) + rate * dt;
       const wheels = [REAR_L, REAR_R];
       while (acc >= 1) {
@@ -59,7 +59,7 @@ export class RaceFx {
       this.driftAcc.set(id, acc);
 
       // 轮胎烟
-      let sacc = (this.dustAcc.get(id) ?? 0) + (14 + k.slip * 24) * dt;
+      let sacc = (this.dustAcc.get(id) ?? 0) + (22 + k.slip * 38) * dt;
       while (sacc >= 1) {
         sacc -= 1;
         const w = wheels[(Math.random() * 2) | 0];

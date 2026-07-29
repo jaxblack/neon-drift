@@ -37,6 +37,17 @@ export class Stage {
   private shake = 0;
   private shakeSeed = Math.random() * 100;
   private fov: number = CAMERA.fovBase;
+  /** 平滑的漂移权重。所有漂移相关的镜头参数都用它插值，
+   *  直接用 kart.drifting 布尔值的话，起漂/收漂瞬间镜头会猛跳一下。 */
+  private driftBlend = 0;
+  /** 平滑的归一化速度，避免速度抖动直接传到镜头距离/FOV 上 */
+  private spdSmooth = 0;
+  private boostSmooth = 0;
+  private slipSmooth = 0;
+  /** 相机自身的 roll。必须自己存一份：
+   *  camera.lookAt() 每帧会重写整个 rotation，直接 damp camera.rotation.z
+   *  读到的是 lookAt 刚写入的值而不是上一帧的 roll，会彻底跑飞。 */
+  private camRoll = 0;
   private initialised = false;
   mode: CameraMode = 'chase';
 
@@ -144,7 +155,7 @@ export class Stage {
       this.sun.position.set(-90, 160, 60);
     } else {
       this.sun.color.setHex(0xcfe0ff);
-      this.sun.intensity = 1.45;
+      this.sun.intensity = 1.75;
       this.sun.position.set(60, 140, 40);
     }
     this.hemi.intensity = theme.env === 'space' ? 1.1 : 1.9;
@@ -180,22 +191,30 @@ export class Stage {
   updateCamera(kart: Kart, alpha: number, dt: number): void {
     const p = kart.interp(alpha);
 
-    // 相机偏航：正常跟车头；漂移时更贴速度方向，才能看清车身的滑行姿态
+    // ---- 先把所有“会突变的量”平滑掉 ----
+    const spdRaw = clamp(kart.speed / KART.maxSpeed, 0, 1.6);
+    const boostRaw = kart.boostTime > 0 ? clamp(kart.boostPower / KART.nitroExtraSpeed, 0, 1) : 0;
+    this.driftBlend = damp(this.driftBlend, kart.drifting ? 1 : 0, 5.5, dt);
+    this.spdSmooth = damp(this.spdSmooth, spdRaw, 2.6, dt);
+    this.boostSmooth = damp(this.boostSmooth, boostRaw, 3.2, dt);
+    this.slipSmooth = damp(this.slipSmooth, clamp(kart.slip * 2, 0, 1), 4, dt);
+    const spdN = this.spdSmooth;
+    const boostN = this.boostSmooth;
+
+    // 相机偏航：正常跟车头；漂移时略向速度方向偏，看得到车身滑行姿态。
+    // 两者之间用 driftBlend 连续插值，不能硬切。
     let targetYaw = p.heading;
     if (kart.speed > 8) {
       const velYaw = Math.atan2(kart.vx, kart.vz);
-      const blend = kart.drifting ? 0.55 : 0.16;
+      const blend = 0.10 + this.driftBlend * 0.16;
       targetYaw = p.heading + shortest(p.heading, velYaw) * blend;
     }
     if (!this.initialised) {
       this.camYaw = targetYaw;
     } else {
-      const rate = kart.drifting ? 5.5 : CAMERA.posLerp * 0.62;
-      this.camYaw = dampAngle(this.camYaw, targetYaw, rate, dt);
+      // 阻尼率固定 —— 随状态变的话会产生“镜头快慢不一”的不稳定感
+      this.camYaw = dampAngle(this.camYaw, targetYaw, 6.5, dt);
     }
-
-    const spdN = clamp(kart.speed / KART.maxSpeed, 0, 1.6);
-    const boostN = kart.boostTime > 0 ? clamp(kart.boostPower / KART.nitroExtraSpeed, 0, 1) : 0;
 
     let dist: number, height: number, lookAhead: number, lookHeight: number;
     switch (this.mode) {
@@ -211,13 +230,13 @@ export class Stage {
         dist = CAMERA.distance; height = CAMERA.height;
         lookAhead = CAMERA.lookAhead; lookHeight = CAMERA.lookHeight;
     }
-    // 速度越快镜头拉远压低 —— 强化贴地飞驰的感觉
-    dist += spdN * 1.6 + boostN * 1.4;
-    height -= spdN * 0.55;
+    // 速度带来的拉远/压低刻意做得很小，否则全程都在微幅度推拉
+    dist += spdN * 0.9 + boostN * 0.8;
+    height -= spdN * 0.3;
 
     const cfx = Math.sin(this.camYaw), cfz = Math.cos(this.camYaw);
     // 漂移时镜头往弯道外侧挪一点，露出车头指向
-    const side = kart.drifting ? kart.driftDir * CAMERA.driftOffset * clamp(kart.slip * 2.2, 0, 1) : 0;
+    const side = kart.driftDir * CAMERA.driftOffset * this.driftBlend * this.slipSmooth;
     const rx = cfz, rz = -cfx;
 
     const tx = p.x - cfx * dist + rx * side;
@@ -261,15 +280,17 @@ export class Stage {
     }
     this.camera.lookAt(this.lookAt);
 
-    // 漂移时轻微 roll，画面更有张力
-    const targetRoll = kart.drifting ? -kart.driftDir * 0.045 * clamp(kart.slip * 2, 0, 1) : 0;
-    this.camera.rotation.z = damp(this.camera.rotation.z, targetRoll, 6, dt);
+    // 漂移时极轻微的 roll，只是一点张力，大了会晕。
+    // 必须在 lookAt 之后用 rotateZ 叠加（局部空间旋转）。
+    const targetRoll = -kart.driftDir * 0.02 * this.driftBlend * this.slipSmooth;
+    this.camRoll = damp(this.camRoll, targetRoll, 5, dt);
+    if (Math.abs(this.camRoll) > 1e-4) this.camera.rotateZ(this.camRoll);
 
-    // FOV：速度感的核心
+    // FOV：速度感的来源，但幅度要克制，而且阻尼率固定
     const targetFov = CAMERA.fovBase + spdN * CAMERA.fovSpeedGain + boostN * CAMERA.fovBoostGain
       + (this.mode === 'hood' ? 6 : 0);
-    this.fov = damp(this.fov, targetFov, kart.boostTime > 0 ? 7 : 4.2, dt);
-    if (Math.abs(this.camera.fov - this.fov) > 0.01) {
+    this.fov = damp(this.fov, targetFov, 5, dt);
+    if (Math.abs(this.camera.fov - this.fov) > 0.02) {
       this.camera.fov = this.fov;
       this.camera.updateProjectionMatrix();
     }

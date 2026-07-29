@@ -20,9 +20,18 @@ export class AudioEngine {
   private windSrc: AudioBufferSourceNode | null = null;
   private windGain!: GainNode;
   private windFilter!: BiquadFilterNode;
-  private driftSrc: AudioBufferSourceNode | null = null;
-  private driftGain!: GainNode;
-  private driftFilter!: BiquadFilterNode;
+  /** 轮胎尖叫：高频共振层 */
+  private screechSrc: AudioBufferSourceNode | null = null;
+  private screechGain!: GainNode;
+  private screechFilter!: BiquadFilterNode;
+  /** 轮胎摩擦：低频“沙沙”层 */
+  private scrubSrc: AudioBufferSourceNode | null = null;
+  private scrubGain!: GainNode;
+  private scrubFilter!: BiquadFilterNode;
+  /** 集气充能：音调随 driftCharge 上升 */
+  private chargeOsc!: OscillatorNode;
+  private chargeOsc2!: OscillatorNode;
+  private chargeGain!: GainNode;
   private boostSrc: AudioBufferSourceNode | null = null;
   private boostGain!: GainNode;
   private boostFilter!: BiquadFilterNode;
@@ -84,12 +93,33 @@ export class AudioEngine {
     // ---- 风噪 ----
     ({ src: this.windSrc, gain: this.windGain, filter: this.windFilter } =
       this.makeNoiseChain('bandpass', 900, 0.7));
-    // ---- 漂移 ----
-    ({ src: this.driftSrc, gain: this.driftGain, filter: this.driftFilter } =
-      this.makeNoiseChain('bandpass', 2400, 4.5));
-    // ---- 喷射 ----
+    // ---- 轮胎尖叫（高 Q 共振，就是这个“呱——”让漂移有存在感）----
+    ({ src: this.screechSrc, gain: this.screechGain, filter: this.screechFilter } =
+      this.makeNoiseChain('bandpass', 2600, 14));
+    // ---- 轮胎摩擦底层 ----
+    ({ src: this.scrubSrc, gain: this.scrubGain, filter: this.scrubFilter } =
+      this.makeNoiseChain('bandpass', 700, 2.2));
+    // ---- 喷射轰鸣 ----
     ({ src: this.boostSrc, gain: this.boostGain, filter: this.boostFilter } =
       this.makeNoiseChain('lowpass', 1500, 3.5));
+
+    // ---- 集气充能音：两个略失谐的三角波，频率随集气上升 ----
+    this.chargeGain = ctx.createGain();
+    this.chargeGain.gain.value = 0;
+    this.chargeGain.connect(this.master);
+    const mkCharge = (detune: number, gain: number): OscillatorNode => {
+      const o = ctx.createOscillator();
+      o.type = 'triangle';
+      o.frequency.value = 200;
+      o.detune.value = detune;
+      const g = ctx.createGain();
+      g.gain.value = gain;
+      o.connect(g).connect(this.chargeGain);
+      o.start();
+      return o;
+    };
+    this.chargeOsc = mkCharge(0, 0.6);
+    this.chargeOsc2 = mkCharge(9, 0.4);
   }
 
   private makeNoiseChain(type: BiquadFilterType, freq: number, q: number) {
@@ -128,8 +158,14 @@ export class AudioEngine {
    * @param slip    侧滑 0..1
    * @param boosting 是否在喷射
    * @param offroad 是否出界
+   * @param drifting 是否在漂移
+   * @param charge  集气 0..1
    */
-  updateEngine(speedN: number, throttle: number, slip: number, boosting: boolean, offroad: boolean, dt: number): void {
+  updateEngine(
+    speedN: number, throttle: number, slip: number,
+    boosting: boolean, offroad: boolean, dt: number,
+    drifting = false, charge = 0,
+  ): void {
     if (!this.ctx || !this.enabled) return;
     const t = this.ctx.currentTime;
 
@@ -156,10 +192,25 @@ export class AudioEngine {
     this.windGain.gain.setTargetAtTime(clamp(sn - 0.2, 0, 1) * 0.075, t, 0.12);
     this.windFilter.frequency.setTargetAtTime(600 + sn * 1800, t, 0.15);
 
-    // 漂移 / 出界摩擦
-    const rub = Math.max(slip, offroad ? 0.5 : 0);
-    this.driftGain.gain.setTargetAtTime(rub * 0.11, t, 0.05);
-    this.driftFilter.frequency.setTargetAtTime(offroad ? 900 : 1900 + slip * 2600, t, 0.08);
+    // ---- 轮胎尖叫：漂移时才有，音高随侧滑与速度走 ----
+    // 高 Q 带通 + 随 slip 上滑的中心频率，听起来就是胎噪那种"咿——"
+    const screechAmt = drifting ? clamp(0.35 + slip * 1.3, 0, 1) * clamp(sn * 1.6, 0, 1) : 0;
+    this.screechGain.gain.setTargetAtTime(screechAmt * 0.13, t, drifting ? 0.03 : 0.09);
+    this.screechFilter.frequency.setTargetAtTime(1500 + slip * 2200 + sn * 900, t, 0.06);
+
+    // 摩擦底层：漂移 + 出界都有
+    const scrub = Math.max(drifting ? 0.4 + slip * 0.6 : 0, offroad ? 0.75 : 0);
+    this.scrubGain.gain.setTargetAtTime(scrub * 0.075, t, 0.05);
+    this.scrubFilter.frequency.setTargetAtTime(offroad ? 480 : 800 + slip * 700, t, 0.08);
+
+    // ---- 集气充能：音调随集气线性上升，松手前能听出攒到几档 ----
+    const chargeVol = drifting && charge > 0.02 ? 0.05 : 0;
+    this.chargeGain.gain.setTargetAtTime(chargeVol, t, 0.05);
+    if (chargeVol > 0) {
+      const f = 190 + charge * 520;
+      this.chargeOsc.frequency.setTargetAtTime(f, t, 0.04);
+      this.chargeOsc2.frequency.setTargetAtTime(f * 1.5, t, 0.04);
+    }
 
     // 喷射轰鸣
     this.boostGain.gain.setTargetAtTime(boosting ? 0.14 : 0, t, boosting ? 0.02 : 0.14);
@@ -204,16 +255,39 @@ export class AudioEngine {
     src.stop(t + dur + 0.02);
   }
 
-  /** 漂移喷射：档位越高越亮，连喷越多音调越高 */
+  /**
+   * 漂移喷射。分三层：
+   *   1. 涡轮泄压“咄”（快速下扫的带通噪声）
+   *   2. 低频轰鸣（方波上扫）
+   *   3. 金属感高频点缀（档位/连喷越高越亮）
+   */
   boost(tier: number, combo: number): void {
-    const base = 320 + tier * 130 + combo * 60;
-    this.blip(base, 0.28, 'square', 0.1, base * 2.6);
-    this.noiseBurst(0.34, 0.13, 'bandpass', 800 + tier * 500, 3600, 2.2);
+    const lift = tier * 0.5 + Math.min(combo, 4) * 0.35;
+    // 泄压
+    this.noiseBurst(0.26 + tier * 0.05, 0.1 + tier * 0.03, 'bandpass', 5200, 900, 3.2);
+    // 轰鸣
+    this.blip(90 + tier * 26, 0.3 + tier * 0.06, 'square', 0.075, 260 + lift * 90);
+    // 金属点缀
+    const ping = 620 + tier * 190 + combo * 90;
+    setTimeout(() => this.blip(ping, 0.16, 'triangle', 0.055, ping * 1.7), 30);
+  }
+
+  /** 起漂：一下短促的胎噪，告诉玩家漂移真的进去了 */
+  driftStart(): void {
+    this.noiseBurst(0.16, 0.075, 'bandpass', 900, 2400, 4);
+  }
+
+  /** 集气跨档：三个递升的“叮”，不看 HUD 也能判断什么时候松手 */
+  chargeTierUp(tier: 1 | 2 | 3): void {
+    const f = [0, 760, 1020, 1380][tier];
+    this.blip(f, 0.09, 'sine', 0.06);
+    if (tier === 3) setTimeout(() => this.blip(f * 1.34, 0.12, 'sine', 0.055), 55);
   }
 
   nitro(): void {
-    this.blip(180, 0.55, 'sawtooth', 0.11, 1400);
-    this.noiseBurst(0.6, 0.16, 'lowpass', 500, 5200, 1.4);
+    this.blip(150, 0.7, 'sawtooth', 0.1, 1500);
+    this.noiseBurst(0.75, 0.15, 'lowpass', 420, 6000, 1.2);
+    setTimeout(() => this.blip(1180, 0.22, 'triangle', 0.05, 2100), 70);
   }
 
   fizzle(): void {
@@ -260,14 +334,17 @@ export class AudioEngine {
   silence(): void {
     if (!this.ctx) return;
     const t = this.ctx.currentTime;
-    for (const g of [this.engGain, this.windGain, this.driftGain, this.boostGain]) {
+    for (const g of [this.engGain, this.windGain, this.screechGain, this.scrubGain, this.chargeGain, this.boostGain]) {
       g?.gain.setTargetAtTime(0, t, 0.05);
     }
   }
 
   dispose(): void {
     this.engOsc.forEach((o) => { try { o.stop(); } catch { /* already stopped */ } });
-    [this.windSrc, this.driftSrc, this.boostSrc].forEach((s) => { try { s?.stop(); } catch { /* already stopped */ } });
+    [this.chargeOsc, this.chargeOsc2].forEach((o) => { try { o?.stop(); } catch { /* already stopped */ } });
+    [this.windSrc, this.screechSrc, this.scrubSrc, this.boostSrc].forEach((s) => {
+      try { s?.stop(); } catch { /* already stopped */ }
+    });
     void this.ctx?.close();
     this.ctx = null;
     this.started = false;

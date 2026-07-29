@@ -110,7 +110,8 @@ export class Race {
         this.fx.boostBurst(k, e.tier, e.combo);
         if (racer.isPlayer) {
           this.audio.boost(e.tier, e.combo);
-          this.cb.onShake?.(0.12 + e.tier * 0.06);
+          // 喷射不震屏 —— 连喷时每秒都在喷，震一下镜头就没法看了。
+          // 速度感交给 FOV + 速度线 + 音效。
           if (e.combo >= 2) {
             const names = ['', '', '双喷', '三喷', '四喷', '五喷', '六喷'];
             this.cb.onCombo?.(`${names[Math.min(e.combo, 6)]}${e.perfect ? ' PERFECT!' : '!'} ×${e.combo}`);
@@ -120,14 +121,15 @@ export class Race {
           }
         }
       },
+      onTierUp: (tier) => { if (racer.isPlayer) this.audio.chargeTierUp(tier); },
       onDriftFizzle: () => { if (racer.isPlayer) this.audio.fizzle(); },
       onDriftStart: () => {
         this.fx.driftStart(k);
-        if (racer.isPlayer) this.cb.onShake?.(0.1);
+        if (racer.isPlayer) this.audio.driftStart();
       },
       onNitro: () => {
         this.fx.nitroBurst(k);
-        if (racer.isPlayer) { this.audio.nitro(); this.cb.onShake?.(0.35); }
+        if (racer.isPlayer) { this.audio.nitro(); this.cb.onShake?.(0.22); }
       },
       onWallHit: (sev) => {
         this.fx.wallSparks(k, sev);

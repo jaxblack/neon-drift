@@ -4,13 +4,15 @@ import { SHOULDER } from '../physics/Kart';
 import { mulberry32, TAU } from '../core/MathUtil';
 import {
   makeRoadTexture, makeGroundTexture, makeStartLineTexture,
-  makeBoostPadTexture, makeBuildingTexture,
+  makeBoostPadTexture, makeBuildingTexture, makeCurbTexture, makeBarrierTexture,
 } from './Textures';
 
 /** 路面纹理沿赛道每多少米重复一次 */
 const TEX_LEN = 24;
 /** 彩虹路面的重复长度更短，一屏能看到好几条色带 */
 const RAINBOW_TEX_LEN = 13;
+/** 路缘石一组红白的长度（m）。太短的话远处会被 mipmap 平均成一片粉白 */
+const CURB_TEX_LEN = 6.5;
 /** 路面横向细分列数（越多跳台的横向过渡越平滑） */
 const COLS = 11;
 const RAIL_H = 1.35;
@@ -45,20 +47,37 @@ export function buildTrackVisual(track: Track): TrackVisual {
   road.receiveShadow = true;
   group.add(road);
 
-  // ================= 路缘霓虹条（赛道边界一眼可辨） =================
+  // ================= 路缘石（curb） =================
+  // 赛道最标志性的视觉元素。弯道处铺得宽一点，直道窄，和真实赛道一样。
   {
-    const edgeMat = reg(new THREE.MeshBasicMaterial({ color: theme.roadEdge, toneMapped: false }));
+    const curbTex = reg(makeCurbTexture(
+      theme.rainbow ? 0x22e6ff : 0xff4a35,
+      theme.rainbow ? 0xffffff : 0xf8fafe,
+    ));
+    const curbMat = reg(new THREE.MeshStandardMaterial({
+      map: curbTex, roughness: 0.62, metalness: 0.02,
+      // 夜景下纯反射的红段会黑成一片；但自发光给高了白段会过 bloom 阈值，
+      // 光晕反过来又把红段吞掉，所以取个不高不低的值
+      emissiveMap: curbTex, emissive: 0xffffff, emissiveIntensity: 0.2,
+    }));
     for (const side of [1, -1] as const) {
       const geo = reg(buildRibbon(
         track, 2,
-        (t) => ({ from: side * (t.half - 0.55), to: side * t.half }),
-        false, 0.05,
+        (t) => {
+          // 弯道更宽（曲率越大越宽），直道也留一条清楚的边
+          const w = 1.7 + Math.min(Math.abs(t.curv) * 260, 1) * 1.8;
+          return { from: side * t.half, to: side * (t.half + w) };
+        },
+        true, 0.035, CURB_TEX_LEN,
       ));
-      const m = new THREE.Mesh(geo, edgeMat);
-      m.renderOrder = 1;
+      const m = new THREE.Mesh(geo, curbMat);
+      m.receiveShadow = true;
       group.add(m);
     }
   }
+
+  // 路缘霓虹条已移除：它是早期为了“看清赛道边界”的临时方案，
+  // toneMapped:false 的高亮会盖掉路缘石。现在边界交给红白 curb 表达。
 
   // ================= 路肩（草地） =================
   // 悬空赛道没有路肩，路面外就是虚空
@@ -77,17 +96,19 @@ export function buildTrackVisual(track: Track): TrackVisual {
     group.add(leftShoulder, rightShoulder);
   }
 
-  // ================= 护栏（发光条） =================
-  const railMat = reg(new THREE.MeshBasicMaterial({
+  // ================= 护栏 =================
+  const railGlowMat = reg(new THREE.MeshBasicMaterial({
     color: theme.guardrail, side: THREE.DoubleSide, toneMapped: false,
   }));
+  const barrierTex = reg(makeBarrierTexture(theme.accent, theme.guardrail));
   const railBase = reg(new THREE.MeshStandardMaterial({
-    color: 0x0a0d18, roughness: 0.6, metalness: 0.3, side: THREE.DoubleSide,
+    map: barrierTex, roughness: 0.62, metalness: 0.2, side: THREE.DoubleSide,
+    emissiveMap: barrierTex, emissive: 0xffffff, emissiveIntensity: 0.2,
   }));
   for (const side of [1, -1] as const) {
     const wall = new THREE.Mesh(reg(buildWall(track, side, RAIL_H)), railBase);
     group.add(wall);
-    const glow = new THREE.Mesh(reg(buildWallStripe(track, side, RAIL_H * 0.72, RAIL_H * 0.92)), railMat);
+    const glow = new THREE.Mesh(reg(buildWallStripe(track, side, RAIL_H * 0.78, RAIL_H * 0.94)), railGlowMat);
     group.add(glow);
   }
 
@@ -170,7 +191,7 @@ export function buildTrackVisual(track: Track): TrackVisual {
 function buildRibbon(
   track: Track,
   cols: number,
-  fromTo: (t: { half: number }) => { from: number; to: number },
+  fromTo: (t: { half: number; curv: number }) => { from: number; to: number },
   isRoad: boolean,
   yOffset = 0,
   texLen = TEX_LEN,
@@ -255,7 +276,8 @@ function buildWallStripe(track: Track, side: 1 | -1, y0: number, y1: number): TH
       pos[k + 1] = baseY + (j === 0 ? y0 : y1);
       pos[k + 2] = bz;
       const k2 = (i * 2 + j) * 2;
-      uv[k2] = dist / 10;
+      // 每 6m 一个围挡色块循环
+      uv[k2] = dist / 6;
       uv[k2 + 1] = j;
     }
   }

@@ -15,6 +15,8 @@ export interface DriftEvent {
 export interface KartEvents {
   /** 松开漂移触发喷射 */
   onBoost?: (e: DriftEvent) => void;
+  /** 集气跨过一个档位阈值（玩家靠这个听觉反馈判断该不该松手） */
+  onTierUp?: (tier: 1 | 2 | 3) => void;
   /** 集气不足，空放 */
   onDriftFizzle?: () => void;
   onDriftStart?: () => void;
@@ -391,6 +393,12 @@ export class Kart {
 
     const before = this.driftCharge;
     this.driftCharge = Math.min(KART.chargeMax, this.driftCharge + rate * dt);
+    // 跨过档位阈值时响一下，让玩家不看 HUD 也知道攒到几档了
+    for (let t = 0; t < 3; t++) {
+      if (before < KART.tier[t] && this.driftCharge >= KART.tier[t]) {
+        this.events.onTierUp?.((t + 1) as 1 | 2 | 3);
+      }
+    }
     // 漂移顺带充氮气
     this.addNitro((this.driftCharge - before) * KART.nitroFromDrift);
   }
@@ -572,9 +580,10 @@ export class Kart {
     // 侧倾：路面 bank + 离心力 + 漂移姿态
     const centrifugal = clamp(-this.lateralSpeed / 26, -1, 1);
     let targetRoll = p.bank * 0.8 + centrifugal * 0.34;
-    if (this.drifting) targetRoll -= this.driftDir * 0.12;
+    // 漂移时车身明显向外倾 —— 这是玩家“看得出在漂”的主要依据
+    if (this.drifting) targetRoll -= this.driftDir * 0.20;
     if (this.spinOut > 0) targetRoll += 0.25;
-    this.bodyRoll = damp(this.bodyRoll, clamp(targetRoll, -0.55, 0.55), 8, dt);
+    this.bodyRoll = damp(this.bodyRoll, clamp(targetRoll, -0.62, 0.62), 8, dt);
 
     // 俯仰：坡度 + 加减速惯性
     const accelPitch = clamp((this.boostTime > 0 ? -0.09 : 0) + (input.brake > 0 && this.forwardSpeed > 4 ? 0.07 : 0), -0.2, 0.2);

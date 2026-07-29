@@ -119,6 +119,8 @@ const loop = new GameLoop(
         k.boostTime > 0,
         k.offroad,
         frameDt,
+        k.drifting,
+        k.driftCharge,
       );
       if (shakeCooldown > 0) shakeCooldown -= frameDt;
     }

@@ -57,6 +57,39 @@ export function makeRoadTexture(road: number, edge: number, rainbow = false): TH
   }
   g.putImageData(img, 0, 0);
 
+  // 深浅不一的沥青斑块（新旧铺装的色差）
+  for (let i = 0; i < 22; i++) {
+    g.globalAlpha = 0.03 + Math.random() * 0.05;
+    g.fillStyle = Math.random() < 0.5 ? '#000' : '#fff';
+    const w = 40 + Math.random() * 180;
+    const h = 30 + Math.random() * 150;
+    g.fillRect(Math.random() * W, Math.random() * H, w, h);
+  }
+  g.globalAlpha = 1;
+
+  // 修补痕：颜色略深的不规则块 + 轮廓
+  for (let i = 0; i < 5; i++) {
+    const x = Math.random() * W, y = Math.random() * H;
+    const w = 50 + Math.random() * 90, h = 26 + Math.random() * 50;
+    g.fillStyle = 'rgba(0,0,0,0.16)';
+    g.fillRect(x, y, w, h);
+    g.strokeStyle = 'rgba(0,0,0,0.26)';
+    g.lineWidth = 2;
+    g.strokeRect(x, y, w, h);
+  }
+
+  // 轮胎痕：沿行进方向的深色双条，赛道“被跑过”的感觉全靠它
+  for (const lane of [0.3, 0.42, 0.58, 0.7]) {
+    if (Math.random() < 0.35) continue;
+    g.strokeStyle = 'rgba(0,0,0,0.2)';
+    g.lineWidth = 7 + Math.random() * 5;
+    g.beginPath();
+    const x = W * lane + (Math.random() - 0.5) * 20;
+    g.moveTo(x, 0);
+    g.bezierCurveTo(x + 18, H * 0.33, x - 18, H * 0.66, x, H);
+    g.stroke();
+  }
+
   // 横向拼接缝（每隔一段一条深色接缝，增强速度感）
   g.strokeStyle = 'rgba(0,0,0,0.28)';
   g.lineWidth = 3;
@@ -86,6 +119,75 @@ export function makeRoadTexture(road: number, edge: number, rainbow = false): TH
   t.wrapS = THREE.ClampToEdgeWrapping;
   t.wrapT = THREE.RepeatWrapping;
   t.anisotropy = 8;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/**
+ * 路缘石（curb）—— 红白相间的斜条。
+ * 这是赛道最标志性的视觉元素，有了它一眼就知道“这是赛道”而不是一条普通的路。
+ * UV 约定：u 横向 0..1，v 沿赛道（每个重复周期 = 一组红白）。
+ */
+export function makeCurbTexture(warm = 0xd8443a, cool = 0xf2f4f8): THREE.Texture {
+  const W = 96, H = 256;
+  const { c, g } = canvas(W, H);
+  g.fillStyle = hex(cool);
+  g.fillRect(0, 0, W, H);
+  g.fillStyle = hex(warm);
+  g.fillRect(0, 0, W, H / 2);
+
+  // 磨损：边缘蹭脏一点，不那么塑料
+  const img = g.getImageData(0, 0, W, H);
+  const d = img.data;
+  for (let i = 0; i < d.length; i += 4) {
+    const n = (Math.random() - 0.5) * 30;
+    d[i] += n; d[i + 1] += n; d[i + 2] += n;
+  }
+  g.putImageData(img, 0, 0);
+
+  // 内侧阴影，让路缘石看起来有厚度
+  const grad = g.createLinearGradient(0, 0, W, 0);
+  grad.addColorStop(0, 'rgba(0,0,0,0.35)');
+  grad.addColorStop(0.35, 'rgba(0,0,0,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, W, H);
+
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = THREE.ClampToEdgeWrapping;
+  t.wrapT = THREE.RepeatWrapping;
+  t.anisotropy = 8;
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/**
+ * 赛道围挡（护栏）—— 交替色块 + 上下边条。
+ * 纯色护栏跑起来像一堵墙，有了节奏感的色块才像赛道。
+ */
+export function makeBarrierTexture(accent: number, alt: number): THREE.Texture {
+  const W = 128, H = 32;
+  const { c, g } = canvas(W, H);
+  g.fillStyle = '#12151f';
+  g.fillRect(0, 0, W, H);
+
+  // 中间一排交替色块
+  const blocks = 4;
+  const bw = W / blocks;
+  for (let i = 0; i < blocks; i++) {
+    g.fillStyle = i % 2 === 0 ? hex(accent) : hex(alt);
+    g.globalAlpha = 0.85;
+    g.fillRect(i * bw + 3, H * 0.28, bw - 6, H * 0.44);
+  }
+  g.globalAlpha = 1;
+
+  // 上下边条
+  g.fillStyle = 'rgba(240,246,255,0.5)';
+  g.fillRect(0, 0, W, 2);
+  g.fillRect(0, H - 3, W, 3);
+
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = THREE.RepeatWrapping;
+  t.wrapT = THREE.ClampToEdgeWrapping;
   t.colorSpace = THREE.SRGBColorSpace;
   return t;
 }

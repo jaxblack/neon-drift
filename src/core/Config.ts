@@ -45,8 +45,9 @@ export const KART = {
   // ---- 抓地 ----
   /** 正常行驶时速度方向收敛到车头的速率（越大越"贴地"） */
   gripNormal: 9.0,
-  /** 漂移时的抓地力（越小滑得越夸张，但太小会直接滑出赛道） */
-  gripDrift: 1.85,
+  /** 漂移时的抓地力。这个值直接决定侧滑角：
+   *  稳态侧滑角 ≈ atan(driftYawBias / gripDrift)，调小就滑得更夸张。 */
+  gripDrift: 1.25,
   /** 出界（路肩/草地）时的抓地力 */
   gripOffroad: 4.5,
 
@@ -154,10 +155,11 @@ export const CAMERA = {
   posLerp: 9.0,
   lookLerp: 11.0,
   fovBase: 68,
-  fovSpeedGain: 17,
-  fovBoostGain: 14,
+  /** FOV 随速度的变化幅度。调大会“呼吸感”很强但显得镜头不稳 */
+  fovSpeedGain: 9,
+  fovBoostGain: 7,
   /** 漂移时相机的侧向偏移 */
-  driftOffset: 2.2,
+  driftOffset: 1.5,
 } as const;
 
 export const RACE = {

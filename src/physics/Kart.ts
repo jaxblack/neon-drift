@@ -286,21 +286,44 @@ export class Kart {
     if (vLong > maxS) vLong = damp(vLong, maxS, 5.5, dt);
     if (vLong < -KART.reverseMaxSpeed) vLong = -KART.reverseMaxSpeed;
 
-    // ---------- 侧向抓地 ----------
-    let grip: number = this.drifting ? KART.gripDrift : KART.gripNormal;
-    if (this.offroad) grip = Math.min(grip, KART.gripOffroad);
-    if (!this.grounded) grip *= 0.25;
-    if (this.stagger > 0) grip *= 0.55;
-    vLat *= Math.exp(-grip * dt);
-
     // ---------- 转向 ----------
+    //
+    // 顺序很关键，之前这里是反的（先吃侧滑再转向，然后把同一对 (vLong,vLat)
+    // 用新车头重新组装）——那等于让速度向量跟着车头一起转，侧滑角被强制归零，
+    // 实测漂移时车头与速度方向平均只差 1.6°，看起来完全不像在漂。
+    //
+    // 正确的车辆模型：转向只改变车头朝向，**世界坐标系下的速度向量不动**。
+    // 车头转过去之后，原来纯纵向的速度在新车身坐标系下自然就有了侧向分量，
+    // 这才是侧滑的来源。轮胎抓地随后去"吃"掉这个侧向分量。
+    const headBefore = this.heading;
     if (controllable) {
       this.applySteering(dt, input, vLong);
     } else {
       // 被击中：原地打转
       this.heading += 13 * dt * (this.driftDir || 1);
-      vLat *= Math.exp(-2.5 * dt);
     }
+
+    // 车头转过的角度：把速度向量投影到新车身轴上（等价于把速度反向旋转 dYaw）
+    const dYaw = wrapAngle(this.heading - headBefore);
+    if (dYaw !== 0) {
+      const c = Math.cos(dYaw), s = Math.sin(dYaw);
+      // 车身轴转了 +dYaw，速度在新轴下的分量相当于绕 -dYaw 旋转
+      const nLong = vLong * c - vLat * s;
+      const nLat = vLong * s + vLat * c;
+      vLong = nLong;
+      vLat = nLat;
+    }
+
+    // ---------- 侧向抓地 ----------
+    // 抓地力把侧滑吃掉。gripNormal 高 → 时间常数 ~0.11s，转向即时跟手；
+    // gripDrift 低 → 时间常数 ~0.37s，车头能明显甩在速度方向之外。
+    // 稳态偏角 ≈ asin(yawRate / grip)。
+    let grip: number = this.drifting ? KART.gripDrift : KART.gripNormal;
+    if (this.offroad) grip = Math.min(grip, KART.gripOffroad);
+    if (!this.grounded) grip *= 0.25;
+    if (this.stagger > 0) grip *= 0.55;
+    if (!controllable) grip = 2.5;
+    vLat *= Math.exp(-grip * dt);
 
     // ---------- 重组速度 ----------
     const nfx = Math.sin(this.heading), nfz = Math.cos(this.heading);

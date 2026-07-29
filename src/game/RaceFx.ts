@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import type { Kart } from '../physics/Kart';
 import type { Racer } from './Racer';
 import type { Track } from '../track/Track';
@@ -12,21 +13,64 @@ function local(k: Kart, right: number, fwd: number): [number, number, number] {
   return [k.x + c * right + s * fwd, k.y, k.z - s * right + c * fwd];
 }
 
-const REAR_L: [number, number] = [-1.06, -1.32];
-const REAR_R: [number, number] = [1.06, -1.32];
+const REAR_L: [number, number] = [-1.08, -1.34];
+const REAR_R: [number, number] = [1.08, -1.34];
 
 /** 所有比赛内的粒子表现 */
 export class RaceFx {
   private driftAcc = new Map<number, number>();
   private trailAcc = new Map<number, number>();
   private dustAcc = new Map<number, number>();
+  /** 每辆车两个后轮的上一个胎印落点 */
+  private skidLast = new Map<number, [THREE.Vector3 | null, THREE.Vector3 | null]>();
+  private skidTmp = new THREE.Vector3();
 
   constructor(private fx: Effects, private track: Track) {}
+
+  /** 胎印：漂移 / 急刹侧滑 / 出界都会留下轮胎痕 */
+  private updateSkid(r: Racer): void {
+    const k = r.kart;
+    const id = r.id;
+    // 坐地、有速度、且确实在滑才留印
+    const slipping = k.drifting || k.slip > 0.16 || k.spinOut > 0;
+    const active = k.grounded && k.speed > 6 && slipping;
+
+    let pair = this.skidLast.get(id);
+    if (!pair) { pair = [null, null]; this.skidLast.set(id, pair); }
+
+    if (!active) {
+      // 断开，下次重新起头，否则会跨过一大段连出一条直线
+      pair[0] = null; pair[1] = null;
+      return;
+    }
+
+    // 滑得越狠印得越黑；出界时浅一点（草地上本来就不会有黑胎印）
+    const opacity = clamp(0.3 + k.slip * 1.5, 0, 0.9) * (k.offroad ? 0.35 : 1);
+
+    for (let i = 0; i < 2; i++) {
+      const w = i === 0 ? REAR_L : REAR_R;
+      const [x, y, z] = local(k, w[0], w[1]);
+      this.skidTmp.set(x, y + 0.03, z);
+      const prev = pair[i];
+      if (prev) {
+        const d = prev.distanceTo(this.skidTmp);
+        // 太密的话白浪费环形缓冲，太疏会断开
+        if (d > 0.42) {
+          this.fx.skid.addSegment(prev, this.skidTmp, 0.34, opacity);
+          prev.copy(this.skidTmp);
+        }
+      } else {
+        pair[i] = this.skidTmp.clone();
+      }
+    }
+  }
 
   /** 每渲染帧的持续型特效 */
   perFrame(r: Racer, dt: number): void {
     const k = r.kart;
     const id = r.id;
+
+    this.updateSkid(r);
 
     // ---------- 漂移火花：档位决定颜色，是玩家读取集气进度的主要视觉 ----------
     if (k.drifting && k.grounded && k.speed > 12) {

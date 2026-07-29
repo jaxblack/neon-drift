@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { makeGlowTexture, makeSparkTexture } from './Textures';
+import { SkidMarks } from './SkidMarks';
 
 interface Particle {
   x: number; y: number; z: number;
@@ -183,28 +184,33 @@ export class ParticlePool {
 export class Effects {
   readonly sparks: ParticlePool;
   readonly smoke: ParticlePool;
+  readonly skid: SkidMarks;
   private group = new THREE.Group();
 
   constructor(scene: THREE.Scene) {
     this.sparks = new ParticlePool(2400, makeSparkTexture(), 6, 0.12);
     this.smoke = new ParticlePool(1200, makeGlowTexture(), 5, 0.09);
-    this.group.add(this.sparks.points, this.smoke.points);
+    this.skid = new SkidMarks();
+    this.group.add(this.skid.mesh, this.sparks.points, this.smoke.points);
     scene.add(this.group);
   }
 
   update(dt: number): void {
     this.sparks.update(dt);
     this.smoke.update(dt);
+    this.skid.update(dt);
   }
 
   clear(): void {
     this.sparks.clear();
     this.smoke.clear();
+    this.skid.clear();
   }
 
   dispose(): void {
     this.sparks.dispose();
     this.smoke.dispose();
+    this.skid.dispose();
     this.group.removeFromParent();
   }
 }

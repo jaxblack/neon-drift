@@ -51,15 +51,21 @@ function loftBody(sections: Array<{ z: number; w: number; h: number; y: number }
   return g;
 }
 
+/**
+ * 车身放样截面。
+ * y 是截面中心高度，h 是半高 —— 所以底盘高度 = y - h。
+ * 旧值里底盘算出来是 -0.02，车直接陷在路面里；现在保证离地 ≈ 0.30，
+ * 车轮半径 0.44，看起来就是正常的车而不是一块板。
+ */
 const BODY_SECTIONS = [
-  { z: -2.00, w: 0.86, h: 0.30, y: 0.40 },
-  { z: -1.55, w: 1.02, h: 0.38, y: 0.40 },
-  { z: -0.75, w: 1.04, h: 0.42, y: 0.40 },
-  { z: 0.00, w: 1.00, h: 0.40, y: 0.38 },
-  { z: 0.70, w: 0.94, h: 0.31, y: 0.34 },
-  { z: 1.40, w: 0.80, h: 0.22, y: 0.29 },
-  { z: 1.90, w: 0.58, h: 0.15, y: 0.25 },
-  { z: 2.15, w: 0.30, h: 0.09, y: 0.23 },
+  { z: -2.05, w: 0.94, h: 0.31, y: 0.73 },
+  { z: -1.55, w: 1.08, h: 0.37, y: 0.73 },
+  { z: -0.75, w: 1.10, h: 0.41, y: 0.71 },
+  { z: 0.00, w: 1.06, h: 0.39, y: 0.67 },
+  { z: 0.70, w: 0.98, h: 0.33, y: 0.61 },
+  { z: 1.40, w: 0.86, h: 0.26, y: 0.53 },
+  { z: 1.90, w: 0.64, h: 0.19, y: 0.46 },
+  { z: 2.20, w: 0.36, h: 0.12, y: 0.41 },
 ];
 
 /** 共享几何/材质缓存：8 辆车不要各建一份 */
@@ -68,13 +74,25 @@ let shared: {
   canopy: THREE.BufferGeometry;
   wheel: THREE.BufferGeometry;
   hub: THREE.BufferGeometry;
+  rim: THREE.BufferGeometry;
   wing: THREE.BufferGeometry;
   wingPost: THREE.BufferGeometry;
+  wingUpper: THREE.BufferGeometry;
   sideSkirt: THREE.BufferGeometry;
+  sidePod: THREE.BufferGeometry;
+  scoop: THREE.BufferGeometry;
+  diffuser: THREE.BufferGeometry;
+  splitter: THREE.BufferGeometry;
+  tailLight: THREE.BufferGeometry;
+  headLight: THREE.BufferGeometry;
   flame: THREE.BufferGeometry;
+  driftFlame: THREE.BufferGeometry;
   glowTex: THREE.Texture;
   tireMat: THREE.MeshStandardMaterial;
   darkMat: THREE.MeshStandardMaterial;
+  chromeMat: THREE.MeshStandardMaterial;
+  tailMat: THREE.MeshBasicMaterial;
+  headMat: THREE.MeshBasicMaterial;
   canopyMat: THREE.MeshPhysicalMaterial;
 } | null = null;
 
@@ -82,24 +100,39 @@ function getShared() {
   if (shared) return shared;
   shared = {
     body: loftBody(BODY_SECTIONS),
-    canopy: new THREE.SphereGeometry(0.52, 16, 10, 0, Math.PI * 2, 0, Math.PI * 0.5),
-    wheel: new THREE.CylinderGeometry(0.44, 0.44, 0.36, 18),
-    hub: new THREE.CylinderGeometry(0.22, 0.22, 0.38, 12),
-    wing: new THREE.BoxGeometry(2.0, 0.09, 0.52),
-    wingPost: new THREE.BoxGeometry(0.12, 0.42, 0.24),
-    sideSkirt: new THREE.BoxGeometry(0.16, 0.1, 2.2),
+    canopy: new THREE.SphereGeometry(0.5, 18, 12, 0, Math.PI * 2, 0, Math.PI * 0.5),
+    wheel: new THREE.CylinderGeometry(0.46, 0.46, 0.40, 20),
+    hub: new THREE.CylinderGeometry(0.24, 0.24, 0.42, 14),
+    rim: new THREE.TorusGeometry(0.34, 0.045, 6, 18),
+    wing: new THREE.BoxGeometry(2.1, 0.1, 0.56),
+    wingPost: new THREE.BoxGeometry(0.11, 0.5, 0.26),
+    wingUpper: new THREE.BoxGeometry(1.9, 0.07, 0.3),
+    sideSkirt: new THREE.BoxGeometry(0.14, 0.11, 2.3),
+    sidePod: new THREE.BoxGeometry(0.3, 0.34, 1.0),
+    scoop: new THREE.BoxGeometry(0.52, 0.24, 0.9),
+    diffuser: new THREE.BoxGeometry(1.7, 0.22, 0.5),
+    splitter: new THREE.BoxGeometry(1.8, 0.07, 0.62),
+    tailLight: new THREE.BoxGeometry(0.46, 0.11, 0.09),
+    headLight: new THREE.BoxGeometry(0.34, 0.1, 0.09),
     flame: new THREE.ConeGeometry(0.26, 1.5, 10, 1, true),
+    // 飘焰：比尾焰更扁更短，从后轮往后外侧喷
+    driftFlame: new THREE.ConeGeometry(0.30, 1.25, 8, 1, true),
     glowTex: makeGlowTexture(),
-    tireMat: new THREE.MeshStandardMaterial({ color: 0x14161f, roughness: 0.92, metalness: 0.02 }),
+    tireMat: new THREE.MeshStandardMaterial({ color: 0x14161f, roughness: 0.95, metalness: 0.02 }),
     darkMat: new THREE.MeshStandardMaterial({ color: 0x0d1018, roughness: 0.45, metalness: 0.7 }),
+    chromeMat: new THREE.MeshStandardMaterial({ color: 0x8a93a8, roughness: 0.22, metalness: 0.95 }),
+    tailMat: new THREE.MeshBasicMaterial({ color: 0xff2a3c, toneMapped: false }),
+    headMat: new THREE.MeshBasicMaterial({ color: 0xdfefff, toneMapped: false }),
     canopyMat: new THREE.MeshPhysicalMaterial({
-      color: 0x0a1a2e, roughness: 0.08, metalness: 0.1,
-      transmission: 0.6, thickness: 0.4, transparent: true, opacity: 0.72,
+      color: 0x0a1a2e, roughness: 0.06, metalness: 0.15,
+      transmission: 0.55, thickness: 0.4, transparent: true, opacity: 0.76,
     }),
   };
   shared.wheel.rotateZ(Math.PI / 2);
   shared.hub.rotateZ(Math.PI / 2);
+  shared.rim.rotateY(Math.PI / 2);
   shared.flame.rotateX(Math.PI / 2); // 锥尖朝 -Z（车尾方向）
+  shared.driftFlame.rotateX(Math.PI / 2);
   return shared;
 }
 
@@ -115,6 +148,10 @@ export class KartVisual {
   private wheels: THREE.Mesh[] = [];
   private flames: THREE.Mesh[] = [];
   private flameMat: THREE.MeshBasicMaterial;
+  /** 漂移飘焰（后轮外侧） */
+  private driftFlames: THREE.Mesh[] = [];
+  private driftFlameMat: THREE.MeshBasicMaterial;
+  private driftFlameScale = 0;
   private underglow: THREE.Mesh;
   private underglowMat: THREE.MeshBasicMaterial;
   private baseColor: THREE.Color;
@@ -142,35 +179,74 @@ export class KartVisual {
 
     // 座舱
     const canopy = new THREE.Mesh(S.canopy, S.canopyMat);
-    canopy.position.set(0, 0.62, -0.28);
-    canopy.scale.set(1, 0.85, 1.5);
+    canopy.position.set(0, 1.02, -0.30);
+    canopy.scale.set(1, 0.92, 1.55);
     this.root.add(canopy);
 
-    // 尾翼
+    // 车顶进气道
+    const scoop = new THREE.Mesh(S.scoop, S.darkMat);
+    scoop.position.set(0, 1.06, -1.28);
+    this.root.add(scoop);
+    const scoopLip = new THREE.Mesh(new THREE.BoxGeometry(0.44, 0.05, 0.1), this.hubMat);
+    scoopLip.position.set(0, 1.19, -0.86);
+    this.owned.push(scoopLip.geometry);
+    this.root.add(scoopLip);
+
+    // 尾翼：双层 + 端板
     const wing = new THREE.Mesh(S.wing, S.darkMat);
-    wing.position.set(0, 0.95, -1.85);
+    wing.position.set(0, 1.30, -1.92);
+    wing.rotation.x = -0.12;
     this.root.add(wing);
-    const wingGlow = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.05, 0.14), this.hubMat);
-    wingGlow.position.set(0, 0.99, -2.05);
-    this.owned.push(wingGlow.geometry);
-    this.root.add(wingGlow);
-    for (const sx of [-0.78, 0.78]) {
+    const wingUpper = new THREE.Mesh(S.wingUpper, this.hubMat);
+    wingUpper.position.set(0, 1.42, -2.02);
+    wingUpper.rotation.x = -0.2;
+    this.root.add(wingUpper);
+    for (const sx of [-1.02, 1.02]) {
+      const endPlate = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.4, 0.62), S.darkMat);
+      endPlate.position.set(sx, 1.32, -1.94);
+      this.owned.push(endPlate.geometry);
+      this.root.add(endPlate);
+    }
+    for (const sx of [-0.72, 0.72]) {
       const post = new THREE.Mesh(S.wingPost, S.darkMat);
-      post.position.set(sx, 0.72, -1.8);
+      post.position.set(sx, 1.06, -1.86);
       this.root.add(post);
     }
 
-    // 侧裙发光条
-    for (const sx of [-1.02, 1.02]) {
+    // 前唇 / 后扩散器
+    const splitter = new THREE.Mesh(S.splitter, S.darkMat);
+    splitter.position.set(0, 0.33, 1.92);
+    this.root.add(splitter);
+    const diffuser = new THREE.Mesh(S.diffuser, S.darkMat);
+    diffuser.position.set(0, 0.42, -2.02);
+    this.root.add(diffuser);
+
+    // 侧箱进气 + 侧裙发光条
+    for (const sx of [-1, 1]) {
+      const pod = new THREE.Mesh(S.sidePod, S.darkMat);
+      pod.position.set(sx * 1.02, 0.66, -0.35);
+      this.root.add(pod);
       const skirt = new THREE.Mesh(S.sideSkirt, this.hubMat);
-      skirt.position.set(sx, 0.28, -0.1);
+      skirt.position.set(sx * 1.06, 0.40, -0.1);
       this.root.add(skirt);
+    }
+
+    // 头灯 / 尾灯
+    for (const sx of [-0.34, 0.34]) {
+      const hl = new THREE.Mesh(S.headLight, S.headMat);
+      hl.position.set(sx, 0.52, 2.02);
+      this.root.add(hl);
+    }
+    for (const sx of [-0.42, 0.42]) {
+      const tl = new THREE.Mesh(S.tailLight, S.tailMat);
+      tl.position.set(sx, 0.80, -2.08);
+      this.root.add(tl);
     }
 
     // 车轮
     const wheelPos: Array<[number, number, number]> = [
-      [-0.98, 0.44, 1.28], [0.98, 0.44, 1.28],
-      [-1.06, 0.46, -1.32], [1.06, 0.46, -1.32],
+      [-1.0, 0.46, 1.30], [1.0, 0.46, 1.30],
+      [-1.08, 0.48, -1.34], [1.08, 0.48, -1.34],
     ];
     for (const [x, y, z] of wheelPos) {
       const w = new THREE.Mesh(S.wheel, S.tireMat);
@@ -178,6 +254,8 @@ export class KartVisual {
       w.castShadow = true;
       const hub = new THREE.Mesh(S.hub, this.hubMat);
       w.add(hub);
+      const rim = new THREE.Mesh(S.rim, S.chromeMat);
+      w.add(rim);
       this.wheels.push(w);
       this.root.add(w);
     }
@@ -190,9 +268,25 @@ export class KartVisual {
     this.owned.push(this.flameMat);
     for (const sx of [-0.42, 0.42]) {
       const f = new THREE.Mesh(S.flame, this.flameMat);
-      f.position.set(sx, 0.44, -2.3);
+      f.position.set(sx, 0.60, -2.35);
       f.visible = false;
       this.flames.push(f);
+      this.root.add(f);
+    }
+
+    // 漂移飘焰：从后轮往后外侧喷，颜色随集气档位走
+    this.driftFlameMat = new THREE.MeshBasicMaterial({
+      color: TIER_COLORS[0], transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false,
+    });
+    this.owned.push(this.driftFlameMat);
+    for (const sx of [-1, 1]) {
+      const f = new THREE.Mesh(S.driftFlame, this.driftFlameMat);
+      f.position.set(sx * 1.06, 0.34, -1.62);
+      // 往后下方、略外展
+      f.rotation.set(-0.22, sx * 0.3, 0);
+      f.visible = false;
+      this.driftFlames.push(f);
       this.root.add(f);
     }
 
@@ -234,7 +328,7 @@ export class KartVisual {
     this.owned.push(tex, mat);
     const s = new THREE.Sprite(mat);
     s.scale.set(4.4, 1.1, 1);
-    s.position.y = 2.6;
+    s.position.y = 2.95;
     s.renderOrder = 10;
     this.root.add(s);
     this.nameSprite = s;
@@ -281,6 +375,26 @@ export class KartVisual {
           : TIER_COLORS[Math.min(3, 1 + kart.comboLevel)];
       this.flameMat.color.lerp(new THREE.Color(col), 0.35);
       this.flameMat.opacity = 0.3 + this.flameScale * 0.28;
+    }
+
+    // 漂移飘焰：集气越高越大越亮，颜色跟着档位走（蓝→紫→金）
+    const driftTarget = kart.drifting ? 0.45 + kart.driftCharge * 0.75 : 0;
+    this.driftFlameScale = damp(this.driftFlameScale, driftTarget, kart.drifting ? 18 : 11, dt);
+    const dfVis = this.driftFlameScale > 0.04;
+    for (let i = 0; i < this.driftFlames.length; i++) {
+      const f = this.driftFlames[i];
+      f.visible = dfVis;
+      if (!dfVis) continue;
+      const flick = 0.8 + Math.random() * 0.4;
+      const s = this.driftFlameScale * flick;
+      f.scale.set(0.55 + s * 0.5, 0.55 + s * 0.5, 0.5 + s * 1.5);
+      // 内侧轮的焰小一点，看起来有方向感
+      const inner = (i === 0 ? -1 : 1) === kart.driftDir;
+      f.scale.multiplyScalar(inner ? 0.75 : 1);
+    }
+    if (dfVis) {
+      this.driftFlameMat.color.lerp(new THREE.Color(TIER_COLORS[kart.driftTier]), 0.3);
+      this.driftFlameMat.opacity = 0.25 + this.driftFlameScale * 0.4;
     }
 
     // 车底辉光随速度/集气变化（封顶，否则 additive + bloom 会炸成一团白光）

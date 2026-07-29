@@ -141,9 +141,13 @@ export class Hud {
   reset(): void {
     this.standingsHtml = '';
     this.standings.innerHTML = '';
+    // 清空文字而不只是移除动画类，否则上一局的提示会以 opacity:0 残留在无障碍树里
     this.toast.classList.remove('show');
+    this.toast.textContent = '';
     this.combo.classList.remove('show');
+    this.combo.textContent = '';
     this.countdown.classList.add('hidden');
+    this.countdown.innerHTML = '';
   }
 }
 

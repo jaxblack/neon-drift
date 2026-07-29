@@ -85,6 +85,8 @@ export class Kart {
   offroad = false;
   wrongWay = false;
   private offroadTime = 0;
+  /** 漂移期间在界外的累计时间，起漂时清零 */
+  private driftOffroadTime = 0;
 
   // ---- 受击 ----
   spinOut = 0;
@@ -118,7 +120,7 @@ export class Kart {
     this.grounded = true; this.airTime = 0; this.landBoostTimer = 0;
     this.spinOut = this.stagger = 0;
     this.bodyRoll = this.bodyPitch = this.steerVisual = this.wheelSpin = 0;
-    this.offroad = false; this.offroadTime = 0; this.wrongWay = false;
+    this.offroad = false; this.offroadTime = 0; this.driftOffroadTime = 0; this.wrongWay = false;
     this.trackIndex = -1;
     const p = this.track.project(x, z, -1);
     this.trackIndex = p.index;
@@ -198,6 +200,7 @@ export class Kart {
     this.breakCombo();
     this.spinOut = 0; this.stagger = 0;
     this.offroadTime = 0;
+    this.driftOffroadTime = 0;
     this.savePrev();
   }
 
@@ -353,6 +356,7 @@ export class Kart {
           this.drifting = true;
           this.driftDir = dir;
           this.driftTime = 0;
+          this.driftOffroadTime = 0;
           // 连喷种子：窗口内起漂直接带一截集气
           this.comboArmed = this.comboTimer > 0;
           this.comboPerfect = this.comboArmed && this.comboTimer <= KART.comboWindow * 0.62;
@@ -521,10 +525,17 @@ export class Kart {
     if (this.offroad !== wasOff) this.events.onOffroad?.(this.offroad);
     if (this.offroad) {
       this.offroadTime += dt;
-      // 出界会打断集气
-      if (this.drifting && this.offroadTime > 0.6) this.releaseDrift();
+      // 漂移中冲出赛道足够久才打断。
+      // 这里必须用“本次漂移的出界时长”而不是全局 offroadTime ——
+      // 用后者的话，只要已经在草地上待足 0.6s，新起的漂移会在同一帧被立刻打断，
+      // 表现为“一旦跑到草地就永远漂不起来”。
+      if (this.drifting) {
+        this.driftOffroadTime += dt;
+        if (this.driftOffroadTime > 0.6) this.releaseDrift();
+      }
     } else {
       this.offroadTime = 0;
+      this.driftOffroadTime = 0;
     }
 
     // 护栏：草地外侧的硬墙

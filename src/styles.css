@@ -339,3 +339,125 @@ kbd {
 @media (max-height: 430px) {
   #minimap { display: none; }
 }
+
+/* ============================================================
+   移动端触摸控件
+   ============================================================ */
+.touch {
+  position: absolute; inset: 0; z-index: 30;
+  pointer-events: none;
+  touch-action: none;
+  -webkit-user-select: none; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.touch > * { pointer-events: auto; }
+
+/* 左半屏虚拟摇杆区 */
+.touch-steer-zone {
+  position: absolute; left: 0; bottom: 0;
+  width: 46%; height: 62%;
+  touch-action: none;
+}
+.steer-hint {
+  position: absolute; left: 18px; bottom: 14px;
+  font-size: 12px; letter-spacing: 2px; color: var(--dim);
+  opacity: 0.55; pointer-events: none;
+}
+.touch-stick { position: absolute; width: 0; height: 0; opacity: 0; transition: opacity 0.14s ease; }
+.touch-stick.on { opacity: 1; }
+.stick-base {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 132px; height: 132px; border-radius: 50%;
+  border: 2px solid rgba(34, 230, 255, 0.35);
+  background: radial-gradient(circle, rgba(34,230,255,0.10), rgba(5,6,15,0.30) 70%);
+  box-shadow: 0 0 26px rgba(34, 230, 255, 0.22);
+}
+.stick-knob {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  width: 62px; height: 62px; border-radius: 50%;
+  background: linear-gradient(135deg, rgba(34,230,255,0.85), rgba(139,92,255,0.85));
+  box-shadow: 0 0 24px rgba(139, 92, 255, 0.6);
+}
+
+/* 陀螺仪倾角条 */
+.touch-tilt {
+  position: absolute; left: 16px; bottom: 16px;
+  width: min(300px, 42vw);
+  display: flex; flex-direction: column; align-items: center; gap: 5px;
+  padding: 8px 12px; border-radius: 12px;
+  background: var(--panel); border: 1px solid var(--stroke);
+}
+.touch-tilt span { font-size: 10.5px; letter-spacing: 1.4px; color: var(--dim); }
+.tilt-bar {
+  position: relative; width: 100%; height: 8px; border-radius: 4px;
+  background: rgba(255,255,255,0.07); overflow: hidden;
+}
+.tilt-bar i {
+  position: absolute; top: 0; left: 50%; width: 12px; height: 100%;
+  margin-left: -6px; border-radius: 4px;
+  background: linear-gradient(90deg, var(--cyan), var(--violet));
+  box-shadow: 0 0 14px rgba(34,230,255,0.7);
+}
+
+/* 右侧按键 */
+.touch-right {
+  position: absolute; right: 14px; bottom: 14px;
+  display: grid; grid-template-columns: auto auto; gap: 10px;
+  align-items: end; justify-items: end;
+}
+.tbtn {
+  width: 88px; height: 88px; border-radius: 50%;
+  font-family: inherit; font-size: 15px; font-weight: 800; letter-spacing: 1px;
+  color: var(--text); background: rgba(10, 14, 30, 0.55);
+  border: 2px solid rgba(255,255,255,0.16);
+  backdrop-filter: blur(4px);
+  transition: transform 0.08s ease, box-shadow 0.12s ease, background 0.12s ease;
+  touch-action: none;
+}
+.tbtn.down { transform: scale(0.92); }
+.tbtn.throttle { width: 110px; height: 110px; border-color: rgba(53,245,160,0.6); color: var(--green); font-size: 18px; }
+.tbtn.throttle.down { background: rgba(53,245,160,0.28); box-shadow: 0 0 34px rgba(53,245,160,0.5); }
+.tbtn.throttle.auto { opacity: 0.45; }
+.tbtn.brake { border-color: rgba(255,77,94,0.55); color: var(--red); }
+.tbtn.brake.down { background: rgba(255,77,94,0.28); box-shadow: 0 0 30px rgba(255,77,94,0.5); }
+.tbtn.drift { border-color: rgba(34,230,255,0.6); color: var(--cyan); }
+.tbtn.drift.down { background: rgba(34,230,255,0.28); box-shadow: 0 0 30px rgba(34,230,255,0.55); }
+.tbtn.nitro { width: 68px; height: 68px; font-size: 13px; border-color: rgba(255,210,63,0.6); color: var(--gold); }
+.tbtn.nitro.down { background: rgba(255,210,63,0.28); box-shadow: 0 0 30px rgba(255,210,63,0.55); }
+
+/* 顶部小按钮 */
+.touch-mini { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); display: flex; gap: 8px; }
+.tmini {
+  width: 42px; height: 42px; border-radius: 12px;
+  background: rgba(10, 14, 30, 0.6); border: 1px solid var(--stroke);
+  color: var(--text); font-size: 17px; line-height: 1;
+  touch-action: none;
+}
+.tmini:active { background: rgba(34,230,255,0.2); }
+
+/* 竖屏提示 */
+.rotate-hint {
+  position: absolute; inset: auto 0 0 0; z-index: 45;
+  display: flex; align-items: center; justify-content: center; gap: 10px;
+  padding: 10px; background: rgba(5, 6, 15, 0.85);
+  border-top: 1px solid var(--stroke); font-size: 13px; color: var(--dim);
+  pointer-events: none;
+}
+.rotate-hint .rotate-icon { font-size: 20px; animation: rotateWiggle 1.6s ease-in-out infinite; }
+@keyframes rotateWiggle { 0%,100% { transform: rotate(0) } 50% { transform: rotate(90deg) } }
+
+/* 窄/矮屏把触摸控件整体缩小，避免挡住 HUD */
+@media (max-height: 460px) {
+  .tbtn { width: 72px; height: 72px; font-size: 13px; }
+  .tbtn.throttle { width: 88px; height: 88px; font-size: 15px; }
+  .tbtn.nitro { width: 58px; height: 58px; font-size: 12px; }
+  .stick-base { width: 110px; height: 110px; }
+  .stick-knob { width: 52px; height: 52px; }
+}
+
+/* 触屏模式：HUD 速度表让开右下角的按键区 */
+body.touch-mode .hud-bottomright { bottom: 128px; transform: scale(0.68); transform-origin: bottom right; }
+body.touch-mode .hud-topleft { transform: scale(0.74); transform-origin: top left; }
+@media (max-height: 460px) {
+  body.touch-mode .hud-bottomright { bottom: 104px; transform: scale(0.6); transform-origin: bottom right; }
+}

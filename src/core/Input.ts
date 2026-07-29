@@ -38,7 +38,7 @@ export function consumeEdges(s: InputState): void {
   s.itemPressed = false;
 }
 
-type Action = 'up' | 'down' | 'left' | 'right' | 'drift' | 'nitro' | 'item' | 'respawn' | 'camera' | 'pause';
+export type Action = 'up' | 'down' | 'left' | 'right' | 'drift' | 'nitro' | 'item' | 'respawn' | 'camera' | 'pause';
 
 const KEYMAP: Record<string, Action> = {
   KeyW: 'up', ArrowUp: 'up',
@@ -92,7 +92,13 @@ export class Input {
     };
     const onBlur = () => { this.held.clear(); };
 
+    // 触屏会补发一套鼠标事件，短时间内忽略掉，免得点虚拟按键顺手放了氮气
+    let lastTouchAt = -1e9;
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.pointerType === 'touch' || e.pointerType === 'pen') lastTouchAt = performance.now();
+    };
     const onMouseDown = (e: MouseEvent) => {
+      if (performance.now() - lastTouchAt < 800) return;
       if (e.button === 0) { this.held.add('nitro'); this.pressed.add('nitro'); }
       if (e.button === 2) { this.held.add('item'); this.pressed.add('item'); }
     };
@@ -102,6 +108,7 @@ export class Input {
     };
     const onContext = (e: Event) => e.preventDefault();
 
+    window.addEventListener('pointerdown', onPointerDown, true);
     window.addEventListener('keydown', onKeyDown);
     window.addEventListener('keyup', onKeyUp);
     window.addEventListener('blur', onBlur);
@@ -110,6 +117,7 @@ export class Input {
     el.addEventListener('contextmenu', onContext);
 
     this.detached.push(() => {
+      window.removeEventListener('pointerdown', onPointerDown, true);
       window.removeEventListener('keydown', onKeyDown);
       window.removeEventListener('keyup', onKeyUp);
       window.removeEventListener('blur', onBlur);

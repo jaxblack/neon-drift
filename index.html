@@ -2,7 +2,10 @@
 <html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
     <meta name="theme-color" content="#05060f" />
     <title>NEON DRIFT · 霓虹飞车</title>
     <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🏎️</text></svg>" />
@@ -64,6 +67,41 @@
         <div id="standings" class="standings"></div>
       </div>
 
+      <!-- ========== 移动端触摸控件 ========== -->
+      <div id="touch" class="touch hidden">
+        <div id="touch-steer-zone" class="touch-steer-zone">
+          <div id="touch-stick" class="touch-stick">
+            <div class="stick-base"></div>
+            <div id="touch-knob" class="stick-knob"></div>
+          </div>
+          <div class="steer-hint">← 拖动转向 →</div>
+        </div>
+
+        <div id="touch-tilt" class="touch-tilt hidden">
+          <div class="tilt-bar"><i id="touch-tilt-needle"></i></div>
+          <span>陀螺仪转向 · 左右倾斜手机</span>
+        </div>
+
+        <div class="touch-right">
+          <button id="tb-nitro" class="tbtn nitro">N₂O</button>
+          <button id="tb-brake" class="tbtn brake">刹车</button>
+          <button id="tb-drift" class="tbtn drift">漂移</button>
+          <button id="tb-throttle" class="tbtn throttle">加速</button>
+        </div>
+
+        <div class="touch-mini">
+          <button id="tb-pause" class="tmini" aria-label="暂停">⏸</button>
+          <button id="tb-camera" class="tmini" aria-label="切换视角">🎥</button>
+          <button id="tb-respawn" class="tmini" aria-label="原地复位">⟲</button>
+        </div>
+      </div>
+
+      <!-- 竖屏提示（仅移动端） -->
+      <div id="rotate-hint" class="rotate-hint hidden">
+        <div class="rotate-icon">📱</div>
+        <p>横屏体验更佳</p>
+      </div>
+
       <!-- ========== 主菜单 ========== -->
       <div id="menu" class="overlay">
         <div class="menu-bg-grid"></div>
@@ -104,6 +142,23 @@
             </div>
           </div>
 
+          <div class="menu-section touch-only hidden" id="touch-settings">
+            <label class="sec-title">移动端操控</label>
+            <div class="chip-row" id="steer-picker">
+              <button class="chip active" data-steer="wheel">虚拟摇杆</button>
+              <button class="chip" data-steer="gyro">陀螺仪</button>
+            </div>
+            <div class="chip-row" id="throttle-picker" style="margin-top:8px">
+              <button class="chip active" data-auto="0">手动油门</button>
+              <button class="chip" data-auto="1">自动加速</button>
+            </div>
+            <div class="chip-row" id="gyro-range-picker" style="margin-top:8px">
+              <button class="chip" data-range="34">低灵敏</button>
+              <button class="chip active" data-range="26">中灵敏</button>
+              <button class="chip" data-range="18">高灵敏</button>
+            </div>
+          </div>
+
           <div class="menu-actions">
             <button id="btn-start" class="btn primary">开始比赛</button>
             <button id="btn-help" class="btn ghost">操作说明</button>
@@ -129,6 +184,16 @@
             <tr><td><kbd>C</kbd></td><td>切换视角</td></tr>
             <tr><td><kbd>Esc</kbd></td><td>暂停</td></tr>
           </table>
+          <div class="touch-only hidden">
+            <h3>手机操作</h3>
+            <ul class="tips">
+              <li><b>虚拟摇杆</b>：左半屏按住并左右拖动转向，松手自动回正。</li>
+              <li><b>陀螺仪</b>：菜单里切到「陀螺仪」，握住手机左右倾斜即可转向；进入比赛的一刻会把当前握持姿势记为中位，比赛中点一下屏幕左下角的倾角条即可重新校准。</li>
+              <li><b>右侧按键</b>：加速 / 刹车 / 漂移 / 氮气，漂移与加速可同时按住做集气连喷。</li>
+              <li><b>自动加速</b>：开启后无需按住加速键，只管转向与漂移。</li>
+              <li>顶部小按钮：⏸ 暂停 · 🎥 视角 · ⟲ 复位。建议横屏游玩。</li>
+            </ul>
+          </div>
           <h3>飞车技巧</h3>
           <ul class="tips">
             <li><b>漂移集气</b>：转向时按住漂移键，车尾侧滑，下方集气条上涨。<b>漂移会明显掉速</b>，滑得越狠掉得越多 —— 所以必须靠后面的喷射把速度赚回来。</li>

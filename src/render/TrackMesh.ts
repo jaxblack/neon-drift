@@ -5,6 +5,7 @@ import { mulberry32, TAU } from '../core/MathUtil';
 import {
   makeRoadTexture, makeGroundTexture, makeStartLineTexture,
   makeBoostPadTexture, makeBuildingTexture, makeCurbTexture, makeBarrierTexture,
+  makeRockTexture,
 } from './Textures';
 
 /** 路面纹理沿赛道每多少米重复一次 */
@@ -35,9 +36,14 @@ export function buildTrackVisual(track: Track): TrackVisual {
   // ================= 路面 =================
   const roadTex = reg(makeRoadTexture(theme.road, theme.roadEdge, theme.rainbow));
   const roadMat = reg(new THREE.MeshStandardMaterial({
-    map: roadTex, roughness: theme.rainbow ? 0.42 : 0.82, metalness: theme.rainbow ? 0.25 : 0.05,
+    map: roadTex,
+    // 夜间沥青不是哑光的。roughness 从 0.82 降下来、配上环境贴图，
+    // 路面才会把天空和霓虹灯拉出一道道倒影——夜景赛车的"湿路感"全靠这个。
+    roughness: theme.rainbow ? 0.42 : 0.62,
+    metalness: theme.rainbow ? 0.25 : 0.1,
+    envMapIntensity: theme.rainbow ? 0.6 : 0.55,
     // 暗色主题下光照不足时也要能看清路面，给一点自发光兜底
-    emissiveMap: roadTex, emissive: 0xffffff, emissiveIntensity: theme.rainbow ? 0.95 : 0.09,
+    emissiveMap: roadTex, emissive: 0xffffff, emissiveIntensity: theme.rainbow ? 0.95 : 0.07,
   }));
   const roadGeo = reg(buildRibbon(
     track, COLS, (t) => ({ from: -t.half, to: t.half }), true, 0,
@@ -511,40 +517,81 @@ function buildEnvironment(track: Track): { obj: THREE.Object3D; disposables: Arr
     g.add(it, il);
   } else {
     // 峡谷：赛道两侧拉起岩壁
+    const rockTex = makeRockTexture(theme.ground);
+    d.push(rockTex);
     for (const side of [1, -1] as const) {
       const geo = buildCanyonWall(track, side, rng);
       const mat = new THREE.MeshStandardMaterial({
-        color: theme.ground, roughness: 1, metalness: 0, side: THREE.DoubleSide, flatShading: true,
+        map: rockTex, color: 0xffffff, roughness: 0.95, metalness: 0,
+        side: THREE.DoubleSide, envMapIntensity: 0.45,
       });
       d.push(geo, mat);
-      g.add(new THREE.Mesh(geo, mat));
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.receiveShadow = true;
+      g.add(mesh);
     }
   }
 
   return { obj: g, disposables: d };
 }
 
+/**
+ * 峡谷岩壁。
+ *
+ * 之前每个采样点各自取一个独立随机数当高度噪声，相邻两行的顶层高度能差出 34 个单位，
+ * 于是山脊变成一排锯齿尖刺，远看像撕碎的纸。这里改成沿赛道方向平滑过的噪声：
+ * 先取随机序列，再做几轮环形均值模糊（必须环形，赛道是闭环，否则接缝处会有台阶），
+ * 叠一层低频正弦做大尺度起伏，得到连绵的山脊线。
+ */
 function buildCanyonWall(track: Track, side: 1 | -1, rng: () => number): THREE.BufferGeometry {
   const N = track.samples.length;
   const rows = N + 1;
-  const LAYERS = 4;
+  const LAYERS = 6;
   const pos = new Float32Array(rows * LAYERS * 3);
+  const uv = new Float32Array(rows * LAYERS * 2);
   const idx: number[] = [];
-  const noise: number[] = [];
-  for (let i = 0; i < rows; i++) noise.push(rng());
 
+  // 环形平滑噪声
+  let noise = new Array(N).fill(0).map(() => rng());
+  for (let pass = 0; pass < 4; pass++) {
+    const next = new Array(N);
+    for (let i = 0; i < N; i++) {
+      const a = noise[(i - 2 + N) % N], b = noise[(i - 1 + N) % N];
+      const c = noise[i];
+      const dd = noise[(i + 1) % N], e = noise[(i + 2) % N];
+      next[i] = (a + b * 2 + c * 3 + dd * 2 + e) / 9;
+    }
+    noise = next;
+  }
+  // 平滑之后方差会塌掉，重新拉开对比，再叠两层低频起伏做山体轮廓
+  const phase = rng() * Math.PI * 2;
+  const shaped = noise.map((v, i) => {
+    const t = (i / N) * Math.PI * 2;
+    const macro = Math.sin(t * 3 + phase) * 0.5 + Math.sin(t * 7 + phase * 2) * 0.25;
+    return clampNum((v - 0.5) * 3.2 + 0.5 + macro * 0.45, 0, 1);
+  });
+
+  let vDist = 0;
   for (let i = 0; i < rows; i++) {
     const s = track.samples[i % N];
+    if (i > 0) {
+      const p = track.samples[(i - 1) % N];
+      vDist += Math.hypot(s.x - p.x, s.z - p.z);
+    }
     const base = s.half + SHOULDER + 1;
-    const nz = noise[i % N];
-    const heights = [0, 6 + nz * 8, 16 + nz * 20, 26 + nz * 34];
-    const widths = [base, base + 3 + nz * 4, base + 9 + nz * 9, base + 20 + nz * 14];
+    const nz = shaped[i % N];
+    const heights = [0, 4 + nz * 4, 11 + nz * 11, 20 + nz * 20, 32 + nz * 28, 44 + nz * 38];
+    const widths = [base, base + 2 + nz * 2, base + 6 + nz * 5, base + 13 + nz * 8,
+      base + 22 + nz * 12, base + 34 + nz * 18];
     for (let j = 0; j < LAYERS; j++) {
       const off = side * widths[j];
       const k = (i * LAYERS + j) * 3;
       pos[k] = s.x + s.lx * off;
       pos[k + 1] = s.y - 1 + heights[j];
       pos[k + 2] = s.z + s.lz * off;
+      const u = (i * LAYERS + j) * 2;
+      uv[u] = vDist / 34;
+      uv[u + 1] = heights[j] / 34;
     }
   }
   for (let i = 0; i < rows - 1; i++) {
@@ -555,8 +602,14 @@ function buildCanyonWall(track: Track, side: 1 | -1, rng: () => number): THREE.B
   }
   const g = new THREE.BufferGeometry();
   g.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
   g.setIndex(idx);
   g.computeVertexNormals();
   g.computeBoundingSphere();
   return g;
 }
+
+function clampNum(v: number, lo: number, hi: number): number {
+  return v < lo ? lo : v > hi ? hi : v;
+}
+

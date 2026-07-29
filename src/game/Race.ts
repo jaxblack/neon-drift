@@ -137,6 +137,15 @@ export class Race {
         if (sev > 0.92) k.hit('spin', 0.4);
         if (racer.isPlayer) { this.audio.crash(sev); this.cb.onShake?.(sev * 0.8); }
       },
+      onWallScrape: (v) => {
+        // 每帧都会来，节流一下再喷火花，否则粒子池瞬间被磨墙填满
+        racer.scrapeAcc += v;
+        if (racer.scrapeAcc > 1.4) {
+          racer.scrapeAcc = 0;
+          this.fx.wallSparks(k, v * 0.5);
+          if (racer.isPlayer) this.cb.onShake?.(v * 0.09);
+        }
+      },
       onLand: (hard, boosted) => {
         this.fx.landing(k, hard);
         if (racer.isPlayer) {

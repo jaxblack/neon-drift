@@ -148,6 +148,9 @@ export const KART = {
   wallBounce: 0.42,
   /** 撞墙时的减速 */
   wallSpeedLoss: 0.55,
+  /** 贴墙磨的持续阻力（每秒速度衰减比例，乘以归一化的沿墙速度）。
+   *  没有它的话靠墙过弯比走赛车线还快。 */
+  wallScrapeDrag: 1.6,
   /** 车车碰撞的推开强度 */
   bumpImpulse: 16,
 

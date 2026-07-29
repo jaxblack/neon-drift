@@ -27,6 +27,8 @@ export class Racer {
   lastPadAt = -99;
   /** 车车碰撞的冷却，避免一次接触反复扣速度 */
   bumpCooldown = 0;
+  /** 蹭墙火花的节流累加器：onWallScrape 每帧都来，攒够了才喷一次 */
+  scrapeAcc = 0;
   /** AI 以 1/4 频率决策，中间帧复用上次的输入 */
   aiCache: InputState | null = null;
 

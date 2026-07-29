@@ -170,18 +170,22 @@ export function makeBarrierTexture(accent: number, alt: number): THREE.Texture {
   g.fillStyle = '#12151f';
   g.fillRect(0, 0, W, H);
 
-  // 中间一排交替色块
+  // 中间一排交替色块。
+  // 之前 alpha 0.85 的高饱和红/黄大格子在画面里比赛道还抢眼，
+  // 一整圈护栏像一条闪烁的糖果带。压低透明度并混一点底色，让它退到背景里去。
   const blocks = 4;
   const bw = W / blocks;
+  const base = new THREE.Color(0x12151f);
   for (let i = 0; i < blocks; i++) {
-    g.fillStyle = i % 2 === 0 ? hex(accent) : hex(alt);
-    g.globalAlpha = 0.85;
-    g.fillRect(i * bw + 3, H * 0.28, bw - 6, H * 0.44);
+    const c2 = new THREE.Color(i % 2 === 0 ? accent : alt).lerp(base, 0.42);
+    g.fillStyle = `#${c2.getHexString()}`;
+    g.globalAlpha = 0.62;
+    g.fillRect(i * bw + 3, H * 0.32, bw - 6, H * 0.36);
   }
   g.globalAlpha = 1;
 
   // 上下边条
-  g.fillStyle = 'rgba(240,246,255,0.5)';
+  g.fillStyle = 'rgba(210,222,240,0.34)';
   g.fillRect(0, 0, W, 2);
   g.fillRect(0, H - 3, W, 3);
 
@@ -307,6 +311,86 @@ export function makeSkyTexture(top: number, bottom: number, env: string): THREE.
 }
 
 /** 圆形柔光点（尾焰/火花/光晕的 sprite） */
+/**
+ * 车头灯打在路面上的光斑。
+ *
+ * 用贴片而不是真 SpotLight：一局最多 8 台车，8 盏带衰减的聚光灯在移动端直接跪，
+ * 而夜景赛车里玩家真正感知到的其实就是"车前方地面被照亮的那一块"。
+ * 贴片是梯形渐变——近车头宽而亮，往前收窄并淡出，两侧留软边。
+ */
+export function makeHeadlightTexture(): THREE.Texture {
+  const W = 128, H = 256;
+  const { c, g } = canvas(W, H);
+  g.clearRect(0, 0, W, H);
+  // v=0 在贴片近端（车头），v=1 在远端
+  for (let y = 0; y < H; y++) {
+    const t = y / (H - 1);
+    // 远端淡出：先亮一段再衰减，避免车头正下方一个突兀的硬边
+    const falloff = Math.pow(1 - t, 1.7) * (t < 0.08 ? t / 0.08 : 1);
+    // 光锥往前张开
+    const halfW = (0.12 + t * 0.42) * W;
+    const grad = g.createLinearGradient(W / 2 - halfW, 0, W / 2 + halfW, 0);
+    grad.addColorStop(0, 'rgba(255,255,255,0)');
+    grad.addColorStop(0.5, `rgba(255,252,235,${(falloff * 0.85).toFixed(3)})`);
+    grad.addColorStop(1, 'rgba(255,255,255,0)');
+    g.fillStyle = grad;
+    g.fillRect(0, y, W, 1);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  return t;
+}
+
+/**
+ * 峡谷岩壁。横向沉积岩层 + 纵向水蚀条纹。
+ * 纯色岩壁在画面里就是一大片死褐色，加了岩层之后才有体积和尺度感。
+ */
+export function makeRockTexture(base: number): THREE.Texture {
+  const N = 256;
+  const { c, g } = canvas(N, N);
+  const col = new THREE.Color(base);
+  g.fillStyle = `#${col.getHexString()}`;
+  g.fillRect(0, 0, N, N);
+
+  // 沉积岩层：粗细不一的水平色带。这是岩壁唯一的主要特征。
+  // 之前还画了一批纵向侵蚀条纹，但岩壁面是斜的、UV 沿赛道拉得很长，
+  // 那些条纹被拉成横贯整面墙的斜划痕，看着像铅笔涂鸦。
+  let y = 0;
+  while (y < N) {
+    const h = 4 + Math.random() * 20;
+    const shade = 0.70 + Math.random() * 0.55;
+    const c2 = col.clone().multiplyScalar(shade);
+    g.fillStyle = `#${c2.getHexString()}`;
+    g.fillRect(0, y, N, h);
+    // 岩层下沿的阴影线，制造层与层之间的厚度
+    g.fillStyle = 'rgba(0,0,0,0.26)';
+    g.fillRect(0, y + h - 1, N, 2);
+    // 层内再嵌几块碎岩，打断纯色带
+    for (let i = 0; i < 6; i++) {
+      const bw = 8 + Math.random() * 40;
+      const bh = Math.max(2, h * (0.3 + Math.random() * 0.5));
+      g.fillStyle = `rgba(0,0,0,${(Math.random() * 0.12).toFixed(3)})`;
+      g.fillRect(Math.random() * N, y + Math.random() * (h - bh), bw, bh);
+    }
+    y += h;
+  }
+
+  // 颗粒感，避免大面积死板
+  for (let i = 0; i < 2600; i++) {
+    const bright = Math.random() < 0.5;
+    g.fillStyle = bright
+      ? `rgba(255,236,210,${(Math.random() * 0.07).toFixed(3)})`
+      : `rgba(0,0,0,${(Math.random() * 0.08).toFixed(3)})`;
+    g.fillRect(Math.random() * N, Math.random() * N, 2, 2);
+  }
+
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 4;
+  return t;
+}
+
 export function makeGlowTexture(): THREE.Texture {
   const N = 128;
   const { c, g } = canvas(N, N);

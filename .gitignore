@@ -10,3 +10,6 @@ npm-debug.log*
 .env
 .env.*
 !.env.example
+
+# 画面迭代时的截图产物
+tmp/

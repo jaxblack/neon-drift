@@ -26,8 +26,17 @@ export class Stage {
   private speedPass: ShaderPass | null = null;
   private sun: THREE.DirectionalLight;
   private hemi: THREE.HemisphereLight;
+  /** 侧后方补光。只有一盏主光时车身背面会黑成剪影，这盏负责把轮廓勾出来 */
+  private rim: THREE.DirectionalLight;
+  /** 主光相对玩家的偏移。applyTheme 设好方向，阴影跟随时直接复用；
+   *  不存下来的话每帧重写 position 会把主题的光向盖掉。 */
+  private sunOffset = new THREE.Vector3(38, 165, 28);
   private sky: THREE.Mesh | null = null;
   private skyDisposables: Array<{ dispose(): void }> = [];
+  /** 由天空烘出来的环境贴图。没有它，金属/粗糙度材质没有任何可反射的东西，
+   *  车身只能靠 emissive 硬撑，于是看起来像一块发光塑料片而不是车漆。 */
+  private pmrem: THREE.PMREMGenerator | null = null;
+  private envRT: THREE.WebGLRenderTarget | null = null;
   quality: Quality = 'high';
 
   // ---- 跟随相机状态 ----
@@ -63,27 +72,36 @@ export class Stage {
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 0.92;
-    this.renderer.shadowMap.enabled = quality === 'high';
+    this.renderer.shadowMap.enabled = quality !== 'low';
     this.renderer.shadowMap.type = THREE.PCFShadowMap;
 
     this.camera = new THREE.PerspectiveCamera(CAMERA.fovBase, 1, 0.4, 5200);
     this.camera.position.set(0, 12, -22);
 
-    // 灯光
-    this.hemi = new THREE.HemisphereLight(0xa6c8ff, 0x3c3a52, 1.9);
+    // 灯光。
+    // 环境光压得很低是故意的：环境贴图（scene.environment）已经提供了大部分
+    // 柔和照明，半球光再开大就会把方向光的阴影冲平，画面变成一片没有立体感的灰。
+    this.hemi = new THREE.HemisphereLight(0xa6c8ff, 0x3c3a52, 0.55);
     this.scene.add(this.hemi);
-    this.sun = new THREE.DirectionalLight(0xfff2d8, 1.5);
+    this.sun = new THREE.DirectionalLight(0xfff2d8, 2.6);
     this.sun.position.set(60, 120, 40);
-    if (quality === 'high') {
+    if (quality !== 'low') {
       this.sun.castShadow = true;
-      this.sun.shadow.mapSize.set(1024, 1024);
+      const size = quality === 'high' ? 2048 : 1024;
+      this.sun.shadow.mapSize.set(size, size);
       const c = this.sun.shadow.camera;
-      c.near = 1; c.far = 420;
-      c.left = -90; c.right = 90; c.top = 90; c.bottom = -90;
-      this.sun.shadow.bias = -0.0012;
-      this.sun.shadow.normalBias = 0.035;
+      c.near = 1; c.far = 300;
+      // 阴影相机跟着玩家走，所以范围只要包住身边这一小块赛道即可。
+      // 收紧到 ±58 让同样的 shadow map 分辨率翻近三倍，车底接触阴影才不会糊成一坨。
+      c.left = -58; c.right = 58; c.top = 58; c.bottom = -58;
+      this.sun.shadow.bias = -0.0006;
+      this.sun.shadow.normalBias = 0.028;
     }
     this.scene.add(this.sun, this.sun.target);
+
+    this.rim = new THREE.DirectionalLight(0x9fc4ff, 0.85);
+    this.rim.position.set(-70, 45, -90);
+    this.scene.add(this.rim);
 
     this.setupComposer();
     this.resize();
@@ -112,9 +130,9 @@ export class Stage {
   setQuality(q: Quality): void {
     if (q === this.quality) return;
     this.quality = q;
-    this.renderer.shadowMap.enabled = q === 'high';
+    this.renderer.shadowMap.enabled = q !== 'low';
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, q === 'high' ? 2 : 1.35));
-    this.sun.castShadow = q === 'high';
+    this.sun.castShadow = q !== 'low';
     this.composer?.dispose();
     this.composer = null;
     this.bloom = null;
@@ -142,23 +160,59 @@ export class Stage {
 
     if (theme.env === 'coast') {
       this.sun.color.setHex(0xffd0a0);
-      this.sun.intensity = 1.55;
-      this.sun.position.set(-200, 90, 120);
+      this.sun.intensity = 2.6;
+      this.sunOffset.set(-52, 175, 40);
     } else if (theme.env === 'canyon') {
       this.sun.color.setHex(0xffc08a);
-      this.sun.intensity = 1.4;
-      this.sun.position.set(120, 110, -60);
+      this.sun.intensity = 2.4;
+      this.sunOffset.set(46, 180, -30);
     } else if (theme.env === 'space') {
-      // 太空：几乎无环境光，全靠路面自发光和车身霓虹
+      // 太空：主光极弱，靠环境贴图和路面自发光撑场面
       this.sun.color.setHex(0xa8c0ff);
-      this.sun.intensity = 0.85;
-      this.sun.position.set(-90, 160, 60);
+      this.sun.intensity = 1.1;
+      this.sunOffset.set(-34, 190, 26);
     } else {
-      this.sun.color.setHex(0xcfe0ff);
-      this.sun.intensity = 1.75;
-      this.sun.position.set(60, 140, 40);
+      // 城市是夜景：这盏其实是月光，不能当太阳使。
+      // 之前强度 2.7 + 低角度，拖出一地又长又硬的斜影子，像正午而不是深夜。
+      this.sun.color.setHex(0xbcd2ff);
+      this.sun.intensity = 1.45;
+      this.sunOffset.set(26, 200, 18);
     }
-    this.hemi.intensity = theme.env === 'space' ? 1.1 : 1.9;
+    this.sun.position.copy(this.sunOffset);
+    this.hemi.intensity = theme.env === 'space' ? 0.42 : 0.55;
+    this.rim.color.setHex(theme.env === 'canyon' ? 0xff9a6a : theme.env === 'coast' ? 0x8fd0ff : 0x9fc4ff);
+    this.rim.intensity = theme.env === 'space' ? 1.15 : 0.85;
+
+    this.bakeEnvironment(theme);
+  }
+
+  /**
+   * 把当前天空烘成一张 PMREM 环境贴图给整个场景用。
+   *
+   * 这是让车看起来像车的关键一步：金属度/粗糙度只有在有东西可反射时才有意义。
+   * 之前场景里 scene.environment 是空的，所有 MeshStandardMaterial 的反射项恒为 0，
+   * 车身只能靠 emissive 自发光把颜色顶上去，结果就是一块均匀发光的板子。
+   * 有了环境贴图，车漆才会出现沿曲面滚动的高光和天空色渐变。
+   */
+  private bakeEnvironment(theme: TrackTheme): void {
+    if (this.quality === 'low' || !this.sky) return;
+    if (!this.pmrem) {
+      this.pmrem = new THREE.PMREMGenerator(this.renderer);
+      this.pmrem.compileEquirectangularShader();
+    }
+    this.envRT?.dispose();
+    // 只把天空球放进临时场景烘焙，赛道几何体不参与——否则每次换主题都要重算一大堆
+    const tmp = new THREE.Scene();
+    const skyClone = new THREE.Mesh(
+      this.sky.geometry,
+      (this.sky.material as THREE.Material),
+    );
+    tmp.add(skyClone);
+    this.envRT = this.pmrem.fromScene(tmp, 0, 0.1, 6000);
+    tmp.remove(skyClone);
+    this.scene.environment = this.envRT.texture;
+    // 太空图天空本身很暗，环境强度补回来一点，免得车身全黑
+    this.scene.environmentIntensity = theme.env === 'space' ? 1.15 : 0.85;
   }
 
   private clearSky(): void {
@@ -295,10 +349,13 @@ export class Stage {
       this.camera.updateProjectionMatrix();
     }
 
-    // 阴影跟随玩家
+    // 阴影跟随玩家。光源偏移量要和 applyTheme 里的方向一致（高角度），
+    // 否则这里每帧重写 position 会把主题调好的光向盖掉，影子又变回斜长条。
     if (this.sun.castShadow) {
       this.sun.target.position.set(p.x, p.y, p.z);
-      this.sun.position.set(p.x + 70, p.y + 130, p.z + 50);
+      this.sun.position.set(
+        p.x + this.sunOffset.x, p.y + this.sunOffset.y, p.z + this.sunOffset.z,
+      );
       this.sun.target.updateMatrixWorld();
     }
     if (this.sky) this.sky.position.set(p.x, 0, p.z);

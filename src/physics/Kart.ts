@@ -22,6 +22,8 @@ export interface KartEvents {
   onDriftStart?: () => void;
   onNitro?: () => void;
   onWallHit?: (severity: number) => void;
+  /** 贴着护栏磨。每帧触发，intensity 按沿墙速度归一化 */
+  onWallScrape?: (intensity: number) => void;
   onLand?: (hard: boolean, boosted: boolean) => void;
   onOffroad?: (entering: boolean) => void;
 }
@@ -94,6 +96,10 @@ export class Kart {
   spinOut = 0;
   /** 被撞后的短暂失控 */
   stagger = 0;
+  /** 撞击反冲（0..1）。给渲染层用来做车身一顿的动作，撞完就衰减 */
+  impactRecoil = 0;
+  /** 撞击来自哪一侧：+1 右 / -1 左 */
+  impactSide: -1 | 1 = 1;
 
   // ---- 视觉（物理层算好，渲染层直接用） ----
   bodyRoll = 0;
@@ -201,6 +207,7 @@ export class Kart {
     this.vx = s.fx * keep; this.vz = s.fz * keep; this.vy = 0;
     this.breakCombo();
     this.spinOut = 0; this.stagger = 0;
+    this.impactRecoil = 0;
     this.offroadTime = 0;
     this.driftOffroadTime = 0;
     this.savePrev();
@@ -221,6 +228,7 @@ export class Kart {
     }
     if (this.spinOut > 0) this.spinOut -= dt;
     if (this.stagger > 0) this.stagger -= dt;
+    if (this.impactRecoil > 0) this.impactRecoil = Math.max(0, this.impactRecoil - dt * 3.2);
     if (this.landBoostTimer > 0) this.landBoostTimer -= dt;
     // 连喷窗口只在非漂移状态倒计时（漂移中窗口冻结）
     if (!this.drifting && this.comboTimer > 0) {
@@ -587,8 +595,23 @@ export class Kart {
         this.vz *= 1 - KART.wallSpeedLoss * sev;
         if (sev > 0.12) {
           this.events.onWallHit?.(sev);
+          this.impactRecoil = Math.max(this.impactRecoil, sev);
+          this.impactSide = -sign as -1 | 1;
           if (this.drifting) this.releaseDrift();
         }
+      }
+
+      // 贴着墙磨。
+      // 之前只处理"撞上去的那一帧"（vn > 0），被推回墙内之后 vn 就不再为正，
+      // 于是全程贴着护栏蹭是完全没有代价、也没有声音和火花的——
+      // 玩家会发现靠墙过弯比走线还快。这里按沿墙的切向速度持续扣速并抛事件。
+      const vt = this.vx * p.fx + this.vz * p.fz;
+      const scrape = clamp(Math.abs(vt) / 30, 0, 1);
+      if (scrape > 0.08) {
+        const drag = KART.wallScrapeDrag * scrape * dt;
+        this.vx -= this.vx * drag;
+        this.vz -= this.vz * drag;
+        this.events.onWallScrape?.(scrape);
       }
     }
 

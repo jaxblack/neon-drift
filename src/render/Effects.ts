@@ -186,8 +186,8 @@ export class Effects {
   private group = new THREE.Group();
 
   constructor(scene: THREE.Scene) {
-    this.sparks = new ParticlePool(2400, makeSparkTexture(), 6, 0.17);
-    this.smoke = new ParticlePool(1200, makeGlowTexture(), 5, 0.10);
+    this.sparks = new ParticlePool(2400, makeSparkTexture(), 6, 0.12);
+    this.smoke = new ParticlePool(1200, makeGlowTexture(), 5, 0.09);
     this.group.add(this.sparks.points, this.smoke.points);
     scene.add(this.group);
   }

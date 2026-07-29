@@ -32,7 +32,7 @@ export class RaceFx {
     if (k.drifting && k.grounded && k.speed > 12) {
       const tier = k.driftTier;
       const color = TIER_COLORS[tier];
-      const rate = 48 + tier * 40 + k.slip * 70;
+      const rate = 36 + tier * 26 + k.slip * 45;
       let acc = (this.driftAcc.get(id) ?? 0) + rate * dt;
       const wheels = [REAR_L, REAR_R];
       while (acc >= 1) {
@@ -86,7 +86,7 @@ export class RaceFx {
       const color = k.boostKind === 'nitro' ? NITRO_COLOR
         : k.boostKind === 'pad' ? 0x35f5a0
           : TIER_COLORS[Math.min(3, 1 + k.comboLevel)];
-      let acc = (this.trailAcc.get(id) ?? 0) + 48 * dt;
+      let acc = (this.trailAcc.get(id) ?? 0) + 40 * dt;
       while (acc >= 1) {
         acc -= 1;
         const [x, y, z] = local(k, rand(-0.55, 0.55), -2.35);

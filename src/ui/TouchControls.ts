@@ -12,11 +12,23 @@ export interface TouchSettings {
   gyroRange: number;
 }
 
-/** 触屏设备判定（粗指针或有触点，桌面浏览器不会误判） */
+/**
+ * 触屏设备判定。
+ *
+ * 之前是 `coarse || maxTouchPoints > 0 || 'ontouchstart' in window`，
+ * 后两个条件在桌面上普遍为真：带触摸屏的 Windows 笔记本 maxTouchPoints 就 > 0，
+ * 桌面版 Chrome 默认也带 ontouchstart。结果端游一样弹出一排虚拟按钮。
+ *
+ * 正确的判据是"主指针是粗指针，且没有任何精确指针"：
+ *   - 手机/纯平板：pointer:coarse 真、any-pointer:fine 假  → 显示
+ *   - 触屏笔记本（有鼠标/触控板）：pointer:coarse 假       → 不显示
+ *   - 纯桌面：两个都指向精确指针                           → 不显示
+ */
 export function isTouchDevice(): boolean {
-  if (typeof window === 'undefined') return false;
-  const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false;
-  return coarse || navigator.maxTouchPoints > 0 || 'ontouchstart' in window;
+  if (typeof window === 'undefined' || !window.matchMedia) return false;
+  const coarsePrimary = window.matchMedia('(pointer: coarse)').matches;
+  const anyFine = window.matchMedia('(any-pointer: fine)').matches;
+  return coarsePrimary && !anyFine;
 }
 
 type OrientationEventCtor = typeof DeviceOrientationEvent & {

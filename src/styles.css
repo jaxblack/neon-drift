@@ -180,39 +180,54 @@ kbd {
 }
 
 /* 氮气：两格独立指示灯（比连续条更容易一眼读出“攻几格”） */
+/* 氮气。
+   之前是 62x15 的细条配 9.5px 暗色标签，在比赛中几乎注意不到——
+   而氮气是玩家唯一需要主动决策的资源，看不见等于这个机制不存在。
+   现在：格子加高加宽、空槽也有明确轮廓、满格时整块面板亮起来。 */
 .nitro-box {
   margin-top: 2px;
-  padding: 9px 14px 11px;
+  padding: 10px 14px 12px;
   border-radius: 11px; background: var(--panel);
   border: 1px solid var(--stroke); backdrop-filter: blur(6px);
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+/* 只要攒满一格，整个面板就亮边——余光就能捕捉到 */
+.nitro-box.ready {
+  border-color: rgba(255,47,185,0.75);
+  box-shadow: 0 0 22px rgba(255,47,185,0.35), inset 0 0 14px rgba(255,47,185,0.12);
 }
 .nitro-head {
   display: flex; align-items: center; justify-content: space-between;
-  font-size: 9.5px; letter-spacing: 2.2px; color: var(--dim); font-weight: 700;
-  margin-bottom: 7px;
+  font-size: 11px; letter-spacing: 2.2px; color: #cfd8ea; font-weight: 800;
+  margin-bottom: 8px;
 }
+.nitro-box.ready .nitro-head { color: #ffd6f2; }
 .nitro-head kbd { padding: 1px 5px; font-size: 9px; border-bottom-width: 1px; letter-spacing: 0; }
 .nitro-cells { display: flex; gap: 7px; }
 .ncell {
-  width: 62px; height: 15px; border-radius: 6px; overflow: hidden;
-  background: rgba(255,255,255,0.07);
-  border: 1px solid rgba(255,255,255,0.12);
+  width: 66px; height: 22px; border-radius: 6px; overflow: hidden;
+  background: rgba(255,255,255,0.05);
+  /* 空槽也要看得见轮廓，否则玩家不知道一共有几格、还差多少 */
+  border: 1.5px solid rgba(180,205,255,0.34);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,0.06);
   transition: border-color 0.18s ease, box-shadow 0.18s ease;
 }
 .ncell i {
   display: block; height: 100%; width: 0%;
   background: linear-gradient(90deg, #1ba8ff, var(--cyan));
+  box-shadow: 0 0 10px rgba(47,224,255,0.6);
   transition: width 0.08s linear;
 }
 .ncell.full {
   border-color: var(--magenta);
-  box-shadow: 0 0 14px rgba(255,47,185,0.55);
+  box-shadow: 0 0 18px rgba(255,47,185,0.7);
 }
 .ncell.full i {
   background: linear-gradient(90deg, var(--magenta), var(--gold));
+  box-shadow: 0 0 16px rgba(255,140,60,0.8);
   animation: nitroPulse 0.55s ease-in-out infinite alternate;
 }
-@keyframes nitroPulse { to { filter: brightness(1.5); } }
+@keyframes nitroPulse { to { filter: brightness(1.55); } }
 
 /* 速度表 */
 .hud-bottomright { position: absolute; bottom: 14px; right: 16px; display: flex; align-items: flex-end; gap: 12px; }

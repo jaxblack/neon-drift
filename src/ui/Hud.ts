@@ -21,6 +21,7 @@ export class Hud {
   private elSpeed = $('hud-speed');
   private dial = $<HTMLElement>('dial-fill');
   private speedo = document.querySelector('.speedo') as HTMLElement;
+  private nitroBox = $('nitro-box');
   private nitroCells = Array.from(
     $('nitro-cells').querySelectorAll<HTMLElement>('.ncell'),
   ).map((cell) => ({ cell, fill: cell.querySelector('i') as HTMLElement }));
@@ -94,6 +95,8 @@ export class Hud {
       fill.style.width = `${amount * 100}%`;
       cell.classList.toggle('full', amount >= 1);
     }
+    // 整块面板亮边：比车时视线在路上，只靠单格变色很容易错过
+    this.nitroBox.classList.toggle('ready', k.nitro >= 1);
 
     // ---- 集气 ----
     const dc = k.drifting ? k.driftCharge : 0;

@@ -21,6 +21,12 @@ import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
 /** 车模在游戏里的目标尺寸（米）。所有外部资产都会等比缩放到这个车长。 */
 const TARGET_LENGTH = 4.4;
 
+/**
+ * 基础离地间隙（米）。
+ * 只管平地；俯仰/侧倾造成的下沉由 KartVisual 里的姿态补偿抬升处理。
+ */
+const RIDE_HEIGHT = 0.035;
+
 export interface PreparedCarModel {
   scene: THREE.Group;
   /** 按 [前左, 前右, 后左, 后右] 排好的轮子节点；找不到就是空数组 */
@@ -179,7 +185,10 @@ function prepare(raw: THREE.Object3D): PreparedCarModel {
   box2.getCenter(center);
   raw.position.x -= center.x;
   raw.position.z -= center.z;
-  raw.position.y -= box2.min.y;
+  // 车底刚好贴 y=0 的话，一上坡道或侧倾就会有一角扎进路面——
+  // 物理只保证接触点在地面上，车身是刚体，姿态一变最低点就下去了。
+  // 抬一点点离地间隙把这个穿模吃掉，视觉上也更像有悬挂的车。
+  raw.position.y -= box2.min.y - RIDE_HEIGHT;
 
   // ---- 收集车漆材质 + 决定谁投影 ----
   const paintMaterials: THREE.MeshStandardMaterial[] = [];
@@ -222,6 +231,10 @@ function prepare(raw: THREE.Object3D): PreparedCarModel {
       const std = m as THREE.MeshStandardMaterial;
       // 统一给外部材质补上环境反射强度，否则在我们这套夜景里会偏暗
       std.envMapIntensity = Math.max(std.envMapIntensity, 1.4);
+      // 展厅资产的自发光强度是按静态渲染调的（这台车用了
+      // KHR_materials_emissive_strength），配上我们的 bloom 会直接烧成白色——
+      // 尾灯看着像前灯，跟在别人车后完全分不清车头车尾。压到能发光但不过曝。
+      if (std.emissive && std.emissiveIntensity > 1.6) std.emissiveIntensity = 1.6;
       if (/body|paint|carpaint|car_paint|shell/i.test(std.name ?? '') && !seenPaint.has(std)) {
         seenPaint.add(std);
         paintMaterials.push(std);

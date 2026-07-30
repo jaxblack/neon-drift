@@ -518,6 +518,14 @@ function buildEnvironment(track: Track): { obj: THREE.Object3D; disposables: Arr
     neon.instanceMatrix.needsUpdate = true;
     if (neon.instanceColor) neon.instanceColor.needsUpdate = true;
     g.add(inst, setback, neon);
+
+    // 街边设施。
+    //
+    // 之前路侧只有远处的楼，路肩到楼之间是一片空地——高速经过时两侧什么都不掠过，
+    // 速度感全靠速度线硬撑。真正让人觉得快的是**近处快速掠过的物体**，
+    // 而近处物体恰恰是之前完全缺失的一层。
+    // 三样东西 + 三个 InstancedMesh，够撑起街道的密度感。
+    addStreetProps(g, d, track, rng);
   } else if (theme.env === 'coast') {
     // 海面
     const geo = new THREE.PlaneGeometry(7000, 7000, 1, 1);
@@ -579,6 +587,125 @@ function buildEnvironment(track: Track): { obj: THREE.Object3D; disposables: Arr
   }
 
   return { obj: g, disposables: d };
+}
+
+/**
+ * 街边设施：路灯 / 护栏外的霓虹广告牌 / 路肩绿化墩。
+ *
+ * 都沿赛道等距铺，而不是随机撒——街道设施本来就是规律排布的，
+ * 而且等距排列在高速下会产生规律的掠过节奏，那是速度感的重要来源。
+ * 每类一个 InstancedMesh，一共 4 个 draw call。
+ */
+function addStreetProps(
+  g: THREE.Object3D,
+  d: Array<{ dispose(): void }>,
+  track: Track,
+  rng: () => number,
+): void {
+  // ---- 路灯：灯杆 + 灯头（灯头不吃光照，直接发亮当作光源本体）----
+  {
+    const poleGeo = new THREE.CylinderGeometry(0.16, 0.22, 9, 6);
+    const headGeo = new THREE.BoxGeometry(1.9, 0.28, 0.5);
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0x2a3042, roughness: 0.6, metalness: 0.7 });
+    const headMat = new THREE.MeshBasicMaterial({ color: 0xffe6b0, toneMapped: false });
+    d.push(poleGeo, headGeo, poleMat, headMat);
+
+    const spacing = 46;
+    const count = Math.floor(track.length / spacing) * 2; // 两侧
+    const poles = new THREE.InstancedMesh(poleGeo, poleMat, count);
+    const heads = new THREE.InstancedMesh(headGeo, headMat, count);
+    poles.castShadow = true;
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const one = new THREE.Vector3(1, 1, 1);
+    let n = 0;
+    for (let i = 0; i * spacing < track.length && n + 1 < count; i++) {
+      const s = track.sampleAt(i * spacing);
+      const yaw = Math.atan2(s.fx, s.fz);
+      for (const side of [1, -1] as const) {
+        const off = side * (s.half + SHOULDER + 2.2);
+        const x = s.x + s.lx * off, z = s.z + s.lz * off;
+        q.setFromEuler(new THREE.Euler(0, yaw, 0));
+        m4.compose(new THREE.Vector3(x, s.y + 4.5, z), q, one);
+        poles.setMatrixAt(n, m4);
+        // 灯头往路中间探出去
+        const hx = x - s.lx * side * 1.1, hz = z - s.lz * side * 1.1;
+        m4.compose(new THREE.Vector3(hx, s.y + 8.8, hz), q, one);
+        heads.setMatrixAt(n, m4);
+        n++;
+      }
+    }
+    poles.count = heads.count = n;
+    poles.instanceMatrix.needsUpdate = true;
+    heads.instanceMatrix.needsUpdate = true;
+    g.add(poles, heads);
+  }
+
+  // ---- 霓虹广告牌：竖立在护栏外侧，随机取色 ----
+  {
+    const geo = new THREE.BoxGeometry(1, 1, 0.3);
+    const mat = new THREE.MeshBasicMaterial({ toneMapped: false, vertexColors: true });
+    d.push(geo, mat);
+    const COLORS = [0xff3d8b, 0x2fe0ff, 0xffc93f, 0x8b5cff, 0x39ffa0, 0xff6a3d];
+    const spacing = 118;
+    const count = Math.floor(track.length / spacing) + 2;
+    const inst = new THREE.InstancedMesh(geo, mat, count);
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    const col = new THREE.Color();
+    let n = 0;
+    for (let i = 0; i * spacing < track.length && n < count; i++) {
+      const s = track.sampleAt(i * spacing + rng() * 40);
+      const side = rng() < 0.5 ? 1 : -1;
+      const off = side * (s.half + SHOULDER + 7 + rng() * 5);
+      const w = 4 + rng() * 5;
+      const h = 2 + rng() * 3;
+      q.setFromEuler(new THREE.Euler(0, Math.atan2(s.fx, s.fz), 0));
+      m4.compose(
+        new THREE.Vector3(s.x + s.lx * off, s.y + 5 + rng() * 5, s.z + s.lz * off),
+        q, new THREE.Vector3(w, h, 1),
+      );
+      inst.setMatrixAt(n, m4);
+      col.setHex(COLORS[Math.floor(rng() * COLORS.length)]);
+      inst.setColorAt(n, col);
+      n++;
+    }
+    inst.count = n;
+    inst.instanceMatrix.needsUpdate = true;
+    if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
+    g.add(inst);
+  }
+
+  // ---- 路肩绿化墩：低矮的深色块，只在近处掠过，用来撑速度感 ----
+  {
+    const geo = new THREE.BoxGeometry(1, 1, 1);
+    const mat = new THREE.MeshStandardMaterial({ color: 0x16301f, roughness: 0.95 });
+    d.push(geo, mat);
+    const spacing = 17;
+    const count = Math.floor(track.length / spacing) * 2;
+    const inst = new THREE.InstancedMesh(geo, mat, count);
+    inst.castShadow = true;
+    const m4 = new THREE.Matrix4();
+    const q = new THREE.Quaternion();
+    let n = 0;
+    for (let i = 0; i * spacing < track.length && n + 1 < count; i++) {
+      const s = track.sampleAt(i * spacing);
+      const yaw = Math.atan2(s.fx, s.fz);
+      for (const side of [1, -1] as const) {
+        if (rng() < 0.25) continue; // 留出缺口，免得像一堵连续的墙
+        const off = side * (s.half + SHOULDER + 0.9);
+        q.setFromEuler(new THREE.Euler(0, yaw + (rng() - 0.5) * 0.3, 0));
+        m4.compose(
+          new THREE.Vector3(s.x + s.lx * off, s.y + 0.5, s.z + s.lz * off),
+          q, new THREE.Vector3(1.1 + rng() * 0.6, 1 + rng() * 0.7, 2.6 + rng() * 1.5),
+        );
+        inst.setMatrixAt(n++, m4);
+      }
+    }
+    inst.count = n;
+    inst.instanceMatrix.needsUpdate = true;
+    g.add(inst);
+  }
 }
 
 /**

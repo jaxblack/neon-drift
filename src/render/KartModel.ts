@@ -9,6 +9,18 @@ import { instantiate, type PreparedCarModel } from './CarModelLoader';
 export const TIER_COLORS = [0x9fd8ff, 0x3ba9ff, 0xb06bff, 0xffc93f];
 export const NITRO_COLOR = 0xff4fd8;
 
+// 外部车模的车轮旋转用：在父空间（车身坐标系）里绕轮轴/转向轴转，
+// 复用同一组临时对象，避免每帧每轮各 new 一个。
+const AXIS_X = new THREE.Vector3(1, 0, 0);
+const AXIS_Y = new THREE.Vector3(0, 1, 0);
+const SPIN_Q = new THREE.Quaternion();
+
+/** 姿态补偿抬升用的车身半长 / 半宽（归一化后的车尺寸） */
+const HALF_LENGTH = 2.2;
+const HALF_WIDTH = 1.05;
+/** 抬升上限。不封顶的话狂甩尾时车会明显浮起来 */
+const MAX_ATTITUDE_LIFT = 0.38;
+
 /** 车身放样截面。n 越大截面越接近方角，越小越接近椭圆。 */
 interface Section { z: number; w: number; h: number; y: number; n: number }
 
@@ -531,7 +543,22 @@ export class KartVisual {
 
   update(kart: Kart, alpha: number, dt: number): void {
     const p = kart.interp(alpha);
-    this.root.position.set(p.x, p.y, p.z);
+    // 姿态补偿抬升。
+    //
+    // 车是刚体，物理只把**车中心**钉在接触点上，然后整车绕中心旋转。
+    // 于是只要有俯仰或侧倾，车头/车角就会沉到路面以下：
+    //   车长 4.4m、刹车点头 0.07 rad → 车头下沉 0.15m，实测就是这个量级。
+    // 而且 bodyPitch 是 damp 出来的，会滞后于真实坡度，固定离地间隙补不住。
+    // 按当前姿态算出最低角下沉了多少，抬回来就行——
+    // 真车有悬挂，本来也是压缩而不是刹进地里。
+    let lift = 0;
+    if (this.usingExternal) {
+      lift = Math.min(
+        Math.abs(Math.sin(p.pitch)) * HALF_LENGTH + Math.abs(Math.sin(p.roll)) * HALF_WIDTH,
+        MAX_ATTITUDE_LIFT,
+      );
+    }
+    this.root.position.set(p.x, p.y + lift, p.z);
     this.root.rotation.set(0, 0, 0);
     this.root.rotateY(p.heading);
     this.root.rotateX(p.pitch);
@@ -555,12 +582,17 @@ export class KartVisual {
     for (let i = 0; i < this.wheels.length; i++) {
       const w = this.wheels[i];
       if (this.usingExternal) {
-        // 外部车模的轮子在导出时可能自带旋转（比如整体转正、左右镜像），
-        // 直接 rotation.set(0,0,0) 会把这些姿态抹掉，轮子当场歪掉。
-        // 所以在它原始朝向的基础上叠加，而不是覆盖。
+        // 外部车模的轮子节点自带初始旋转（导出时的摆正/镜像）。
+        // 不能用 rotateX/rotateY——那是绕节点**自己的**局部轴转，
+        // 而初始旋转已经把局部轴拧到别处去了，结果是乱晃而不是滚动。
+        // 用 premultiply 在父空间（车身坐标系）里转：X 就是轮轴，Y 就是转向轴。
         w.quaternion.copy(this.wheelBase[i]);
-        if (i < 2) w.rotateY(-kart.steerVisual * 0.62);
-        w.rotateX(spin);
+        SPIN_Q.setFromAxisAngle(AXIS_X, spin);
+        w.quaternion.premultiply(SPIN_Q);
+        if (i < 2) {
+          SPIN_Q.setFromAxisAngle(AXIS_Y, -kart.steerVisual * 0.62);
+          w.quaternion.premultiply(SPIN_Q);
+        }
       } else {
         w.rotation.set(0, 0, 0);
         if (i < 2) w.rotateY(-kart.steerVisual * 0.62);

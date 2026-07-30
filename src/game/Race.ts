@@ -12,6 +12,7 @@ import type { AudioEngine } from '../core/Audio';
 import { consumeEdges, emptyInput, type InputState } from '../core/Input';
 import { RACE, RACER_COLORS, RACER_NAMES, KART, type Difficulty } from '../core/Config';
 import { clamp } from '../core/MathUtil';
+import type { PreparedCarModel } from '../render/CarModelLoader';
 
 export interface RaceConfig {
   trackId: string;
@@ -62,6 +63,8 @@ export class Race {
     private stage: Stage,
     private audio: AudioEngine,
     readonly config: RaceConfig,
+    /** 外部 glTF 车模。为空时每台车退回程序化车模 */
+    private carModel: PreparedCarModel | null = null,
   ) {
     const def = getTrackDef(config.trackId);
     this.track = new Track(def);
@@ -87,7 +90,7 @@ export class Race {
       const kart = new Kart(this.track);
       const g = grid[i];
       kart.reset(g.x, g.y, g.z, g.heading);
-      const visual = new KartVisual({ color, isPlayer });
+      const visual = new KartVisual({ color, isPlayer, model: this.carModel });
       if (!isPlayer) visual.setLabel(name, color);
       stage.scene.add(visual.root);
 

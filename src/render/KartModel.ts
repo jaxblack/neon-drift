@@ -3,6 +3,7 @@ import type { Kart } from '../physics/Kart';
 import { KART } from '../core/Config';
 import { clamp, damp } from '../core/MathUtil';
 import { makeGlowTexture, makeHeadlightTexture, makeTailReflectTexture } from './Textures';
+import { instantiate, type PreparedCarModel } from './CarModelLoader';
 
 /** 集气档位对应的火花/尾焰颜色 —— 蓝 → 紫 → 金，一眼看出攒了多少 */
 export const TIER_COLORS = [0x9fd8ff, 0x3ba9ff, 0xb06bff, 0xffc93f];
@@ -258,6 +259,8 @@ function getShared() {
 export interface KartVisualOptions {
   color: number;
   isPlayer: boolean;
+  /** 外部 glTF 车模。不传就用程序化车模 */
+  model?: PreparedCarModel | null;
 }
 
 /** 一辆车的全部可视元素 */
@@ -278,6 +281,13 @@ export class KartVisual {
   private headBeamMat: THREE.MeshBasicMaterial;
   /** 尾灯在湿路面上的倒影 */
   private tailReflectMat: THREE.MeshBasicMaterial;
+  private tailReflect!: THREE.Mesh;
+  /** 程序化车壳件。接入外部车模时整批隐藏，特效层不受影响 */
+  private shellParts: THREE.Object3D[] = [];
+  private externalModel: THREE.Object3D | null = null;
+  /** 外部车模的轮子有自己的初始姿态，不能像程序化轮子那样直接 rotation.set(0,0,0) 清掉 */
+  private usingExternal = false;
+  private wheelBase: THREE.Quaternion[] = [];
   private baseColor: THREE.Color;
   private nameSprite?: THREE.Sprite;
   private bodyMat: THREE.MeshPhysicalMaterial;
@@ -435,6 +445,7 @@ export class KartVisual {
     refl.position.y = 0.04;
     refl.renderOrder = 1;
     this.root.add(refl);
+    this.tailReflect = refl;
 
     // 车底辉光：贴地光斑（不能用 Sprite，它会面向相机把整台车糊住）
     this.baseColor = color.clone();
@@ -453,6 +464,36 @@ export class KartVisual {
     // AI 车也要投影。之前只有玩家车投影，结果前面一排对手全部悬空贴在路面上，
     // 完全没有"车压在地上"的重量感。8 车 x 5 网格 = 40 个 caster，
     // 对 shadow map 来说不是压力。
+
+    // 有外部车模就换掉程序化车身。灯光/尾焰/胎印/光斑这些特效层继续用自己的，
+    // 因为它们和物理状态绑定，不依赖车身几何。
+    if (opts.model) this.useExternalModel(opts.model, color);
+  }
+
+  /**
+   * 用外部 glTF 车模替换程序化车身。
+   *
+   * 只隐藏"车壳"部分（车身、玻璃、尾翼、灯、轮子这些造型件），
+   * 保留特效层（尾焰、飘焰、车底辉光、车头灯光斑、尾灯倒影）——
+   * 那些是按物理状态驱动的，和用哪个车模无关。
+   */
+  private useExternalModel(model: PreparedCarModel, color: THREE.Color): void {
+    // 特效层按引用排除，剩下的 root 子节点就是程序化车壳
+    const fx = new Set<THREE.Object3D>([
+      ...this.flames, ...this.driftFlames,
+      this.underglow, this.headBeam, this.tailReflect,
+    ]);
+    this.shellParts = this.root.children.filter((c) => !fx.has(c));
+    for (const m of this.shellParts) m.visible = false;
+    this.wheels.length = 0;
+
+    const inst = instantiate(model, color);
+    this.externalModel = inst.scene;
+    this.root.add(inst.scene);
+    // 外部模型能认出轮子就接上转动，认不出也不影响其它部分
+    this.wheels.push(...(inst.wheels as THREE.Mesh[]));
+    this.wheelBase = this.wheels.map((w) => w.quaternion.clone());
+    this.usingExternal = true;
   }
 
   /** 头顶名牌（AI / 联机玩家） */
@@ -513,9 +554,18 @@ export class KartVisual {
     const spin = kart.wheelSpin;
     for (let i = 0; i < this.wheels.length; i++) {
       const w = this.wheels[i];
-      w.rotation.set(0, 0, 0);
-      if (i < 2) w.rotateY(-kart.steerVisual * 0.62);
-      w.rotateX(spin);
+      if (this.usingExternal) {
+        // 外部车模的轮子在导出时可能自带旋转（比如整体转正、左右镜像），
+        // 直接 rotation.set(0,0,0) 会把这些姿态抹掉，轮子当场歪掉。
+        // 所以在它原始朝向的基础上叠加，而不是覆盖。
+        w.quaternion.copy(this.wheelBase[i]);
+        if (i < 2) w.rotateY(-kart.steerVisual * 0.62);
+        w.rotateX(spin);
+      } else {
+        w.rotation.set(0, 0, 0);
+        if (i < 2) w.rotateY(-kart.steerVisual * 0.62);
+        w.rotateX(spin);
+      }
     }
 
     // 尾焰
@@ -581,6 +631,20 @@ export class KartVisual {
   dispose(): void {
     this.owned.forEach((o) => o.dispose());
     this.owned = [];
+    // 外部车模：几何体和大部分材质是所有车共享的模板，不能释放；
+    // 但 instantiate() 为了逐车染色 clone 过车漆材质，那些是本车独有的，
+    // 不释放的话每换一局都会漏一批材质。
+    if (this.externalModel) {
+      this.externalModel.traverse((o) => {
+        const mesh = o as THREE.Mesh;
+        if (!mesh.isMesh) return;
+        const mats = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+        for (const m of mats) {
+          if ((m as THREE.Material & { __cloned?: boolean }).__cloned) m.dispose();
+        }
+      });
+      this.externalModel = null;
+    }
     this.root.clear();
   }
 }

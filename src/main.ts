@@ -4,6 +4,7 @@ import { GameLoop } from './core/GameLoop';
 import { Input, emptyInput, type InputState } from './core/Input';
 import { AudioEngine } from './core/Audio';
 import { Stage, type Quality } from './render/Stage';
+import { loadCarModelFromManifest, type PreparedCarModel } from './render/CarModelLoader';
 import { Race, type RaceConfig } from './game/Race';
 import { TRACKS } from './track/Track';
 import { Hud, renderResults, escapeHtml } from './ui/Hud';
@@ -202,6 +203,15 @@ function sampleLoopInput(dt: number): void {
 loop.start();
 
 // ============================================================
+// 外部车模（可选）
+// ============================================================
+// 仓库里默认不带车模 —— 第三方资产有授权约束，不适合直接进公开仓库。
+// 把 .glb 放到 public/models/ 并在 manifest.json 里指向它就会生效，
+// 没配就用程序化车模。详见 public/models/README.md。
+let carModel: PreparedCarModel | null = null;
+void loadCarModelFromManifest(stage.renderer).then((m) => { carModel = m; });
+
+// ============================================================
 // 比赛生命周期
 // ============================================================
 function startRace(): void {
@@ -220,7 +230,7 @@ function startRace(): void {
       difficulty: settings.difficulty,
       playerName: settings.playerName,
     };
-    race = new Race(stage, audio, cfg);
+    race = new Race(stage, audio, cfg, carModel);
     wireRaceCallbacks(race);
     hud.reset();
     hud.setTrack(race);

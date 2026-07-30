@@ -9,6 +9,7 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
+    "fetch-decoders": "node tools/fetch-decoders.mjs",
     "server": "node server/index.mjs"
   },
   "dependencies": {

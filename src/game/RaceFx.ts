@@ -49,7 +49,12 @@ export class RaceFx {
 
     for (let i = 0; i < 2; i++) {
       const w = i === 0 ? REAR_L : REAR_R;
-      const [x, y, z] = local(k, w[0], w[1]);
+      const [x, , z] = local(k, w[0], w[1]);
+      // 高度必须在**轮子那个点**上重新采样，不能用 k.y。
+      // k.y 是车中心的路面高度，而路面是带 banking 的：左右轮相距 2.16m，
+      // 在有倾角的弯道上两侧路面高度能差 ±11cm —— 低的那条胎印直接被路面挡住，
+      // 看起来就成了"只有一条胎印"。
+      const y = this.track.surfaceHeight(x, z, k.trackIndex).y;
       this.skidTmp.set(x, y + 0.03, z);
       const prev = pair[i];
       if (prev) {

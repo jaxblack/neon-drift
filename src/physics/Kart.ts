@@ -102,12 +102,24 @@ export class Kart {
   impactSide: -1 | 1 = 1;
 
   // ---- 视觉（物理层算好，渲染层直接用） ----
+  /**
+   * 姿态拆成两层，不要合并：
+   *  - ground*：**地形贴合**。必须精确等于路面姿态，几乎不阻尼。
+   *    以前把 bank 揉进 bodyRoll 里再统一阻尼（还只取 0.8 倍），
+   *    结果车身在带倾角的弯道上永远跟路面差一个角度，车宽 1.9m × bank
+   *    → 内侧车角沉进路面 ~21cm，就是“车卡在路里”。
+   *  - body*：**悬挂/惯性**。离心侧倾、漂移外倾、刹车点头，这些才该阻尼。
+   */
+  groundRoll = 0;
+  groundPitch = 0;
   bodyRoll = 0;
   bodyPitch = 0;
+  /** 姿态补偿抬升：保证 4 个车角都不低于路面（见 computeGroundLift） */
+  groundLift = 0;
   steerVisual = 0;
   wheelSpin = 0;
   /** 上一物理步的位姿，用于渲染插值 */
-  prev = { x: 0, y: 0, z: 0, heading: 0, roll: 0, pitch: 0 };
+  prev = { x: 0, y: 0, z: 0, heading: 0, roll: 0, pitch: 0, lift: 0 };
 
   // ---- 追赶机制 ----
   rubberBand = 0;
@@ -128,6 +140,13 @@ export class Kart {
     this.grounded = true; this.airTime = 0; this.landBoostTimer = 0;
     this.spinOut = this.stagger = 0;
     this.bodyRoll = this.bodyPitch = this.steerVisual = this.wheelSpin = 0;
+    this.groundRoll = this.groundPitch = this.groundLift = 0;
+    // 立刻贴合一次地形。否则起跑格那一帧车身是水平的、抬升是 0，
+    // 而起跑格在中心线侧方、路面带 banking，四个车角高差能到 0.5m —— 开局就陷在路里。
+    const p0 = this.track.project(x, z);
+    this.groundRoll = p0.bank;
+    this.groundPitch = -Math.atan(p0.grade);
+    this.groundLift = this.computeGroundLift();
     this.offroad = false; this.offroadTime = 0; this.driftOffroadTime = 0; this.wrongWay = false;
     this.trackIndex = -1;
     const p = this.track.project(x, z, -1);
@@ -140,7 +159,24 @@ export class Kart {
   savePrev(): void {
     this.prev.x = this.x; this.prev.y = this.y; this.prev.z = this.z;
     this.prev.heading = this.heading;
-    this.prev.roll = this.bodyRoll; this.prev.pitch = this.bodyPitch;
+    // 存合成后的总姿态，渲染层不用再关心地形/悬挂/反冲的拆分
+    this.prev.roll = this.visualRoll;
+    this.prev.pitch = this.visualPitch;
+    this.prev.lift = this.groundLift;
+  }
+
+  /**
+   * 渲染用的总侧倾 / 总俯仰。
+   *
+   * 撞击反冲必须在这里合进去，而不是像以前那样在 KartModel 里额外再转一把：
+   * computeGroundLift 看不见那两个额外角，于是撞完那几帧车角会直接切进路面
+   * （实测最深 25cm）。碰撞越狠这个现象越明显。
+   */
+  get visualRoll(): number {
+    return this.groundRoll + this.bodyRoll - this.impactSide * this.impactRecoil * 0.16;
+  }
+  get visualPitch(): number {
+    return this.groundPitch + this.bodyPitch - this.impactRecoil * 0.09;
   }
 
   /** 当前速度上限（含喷射 / 出界 / 漂移修正） */
@@ -201,7 +237,10 @@ export class Kart {
   /** 复位到赛道中心 */
   respawn(): void {
     const s = this.track.sampleAt(this.trackDist);
-    this.x = s.x; this.y = s.y + 0.5; this.z = s.z;
+    this.x = s.x; this.z = s.z;
+    // 同样要用 surfaceHeight：s.y 是中心线采样，不含跳台抬升，
+    // 在跳台上复位会直接塑进路面里
+    this.y = this.track.surfaceHeight(s.x, s.z, this.trackIndex).y + 0.05;
     this.heading = Math.atan2(s.fx, s.fz);
     const keep = Math.min(this.speed, 18) * 0.5;
     this.vx = s.fx * keep; this.vz = s.fz * keep; this.vy = 0;
@@ -622,18 +661,27 @@ export class Kart {
   private updateVisuals(dt: number, input: InputState): void {
     const p = this.track.project(this.x, this.z, this.trackIndex);
 
-    // 侧倾：路面 bank + 离心力 + 漂移姿态
+    // --- 第一层：地形贴合。必须精确，不能阻尼掉 ---
+    // 落地瞬间硬赋值会看到角度跳变，所以用一个很快的 damp（60 @120Hz 基本一步到位），
+    // 腾空时松开（4），让车保持起跳姿态而不是贴着下方地形扭。
+    const rate = this.grounded ? 60 : 4;
+    const conform = this.grounded ? 1 : 0;
+    this.groundRoll = damp(this.groundRoll, p.bank * conform, rate, dt);
+    this.groundPitch = damp(this.groundPitch, -Math.atan(p.grade) * conform, rate, dt);
+
+    // --- 第二层：悬挂 / 惯性。只放动态量，不再混入路面姿态 ---
     const centrifugal = clamp(-this.lateralSpeed / 26, -1, 1);
-    let targetRoll = p.bank * 0.8 + centrifugal * 0.34;
-    // 漂移时车身明显向外倾 —— 这是玩家“看得出在漂”的主要依据
+    let targetRoll = centrifugal * 0.34;
+    // 漂移时车身明显向外倾 —— 这是玩家"看得出在漂"的主要依据
     if (this.drifting) targetRoll -= this.driftDir * 0.20;
     if (this.spinOut > 0) targetRoll += 0.25;
-    this.bodyRoll = damp(this.bodyRoll, clamp(targetRoll, -0.62, 0.62), 8, dt);
+    this.bodyRoll = damp(this.bodyRoll, clamp(targetRoll, -0.45, 0.45), 8, dt);
 
-    // 俯仰：坡度 + 加减速惯性
     const accelPitch = clamp((this.boostTime > 0 ? -0.09 : 0) + (input.brake > 0 && this.forwardSpeed > 4 ? 0.07 : 0), -0.2, 0.2);
-    const targetPitch = this.grounded ? -Math.atan(p.grade) + accelPitch : clamp(-this.vy / 40, -0.35, 0.35);
+    const targetPitch = this.grounded ? accelPitch : clamp(-this.vy / 40, -0.35, 0.35);
     this.bodyPitch = damp(this.bodyPitch, targetPitch, this.grounded ? 7 : 3.5, dt);
+
+    this.groundLift = this.computeGroundLift();
 
     // 前轮视觉转角
     const tgtSteer = this.drifting
@@ -642,20 +690,76 @@ export class Kart {
     this.steerVisual = damp(this.steerVisual, tgtSteer, 13, dt);
   }
 
+  /**
+   * 车体 4 个角实测抬升量。
+   *
+   * 车是刚体，物理只在**车中心**采一个高度、然后整车绕中心旋转。只要车身姿态
+   * 和路面姿态有任何偏差（悬挂动态、阻尼滞后、路面纵向曲率），车角就会沉到
+   * 路面以下。与其猜一个固定离地间隙，不如直接把 4 个角的世界坐标算出来、
+   * 拿真实路面高度一减，取最深的那个抬回去 —— 自校正，永远不会再"卡进路里"。
+   *
+   * 旋转顺序必须和 KartModel 一致：rotateY(h) → rotateX(pitch) → rotateZ(-roll)，
+   * 于是局部点 (lx, 0, lz) 的竖直偏移 = -lx·sin(roll)·cos(pitch) - lz·sin(pitch)。
+   */
+  private computeGroundLift(): number {
+    // 这里刻意不判 grounded：真正腾空时 4 个角本来就都在路面之上，
+    // need 全为负、lift 自然是 0，不会把车吸在地形上。
+    // 而落地/上跳台的那几帧恰恰是最容易插进路面的时候 —— 之前用 grounded 当门，
+    // 正好把最需要补偿的那几帧漏掉了。
+    const roll = this.visualRoll;
+    const pitch = this.visualPitch;
+    const sr = Math.sin(roll), cr = Math.cos(roll);
+    const sp = Math.sin(pitch), cp = Math.cos(pitch);
+    const sh = Math.sin(this.heading), ch = Math.cos(this.heading);
+    let lift = 0;
+    for (let i = 0; i < FOOTPRINT.length; i++) {
+      const lx = FOOTPRINT[i][0], lz = FOOTPRINT[i][1];
+      const px = lx * cr;
+      const py = -lx * sr * cp - lz * sp;
+      const pz = -lx * sr * sp + lz * cp;
+      const wx = this.x + px * ch + pz * sh;
+      const wz = this.z - px * sh + pz * ch;
+      const need = this.track.surfaceHeight(wx, wz, this.trackIndex).y - (this.y + py);
+      if (need > lift) lift = need;
+    }
+    // CONTACT_CLEARANCE：渲染层在两个物理步之间做线性插值，而抬升量是位置的
+    // 非线性函数，弯道上弦会落在弧下方，留几毫米余量把这个误差盖掉。
+    // 真车有胎压变形，本来也不是刚好零间隙。
+    //
+    // 封顶只是个 sanity guard（防数值爆炸），不是调参：抬升是位置的连续函数，
+    // 调高不会导致“弹起来”。以前封 0.5 太紧：车冲上路肩碎石地时四个角的
+    // 地面高差实测能到 0.69m，需要 0.75m 抬升，直接被截断 → 车角切进地里 25cm。
+    return Math.min(lift + CONTACT_CLEARANCE, 1.2);
+  }
+
   /** 渲染插值 */
-  interp(alpha: number): { x: number; y: number; z: number; heading: number; roll: number; pitch: number } {
+  interp(alpha: number): { x: number; y: number; z: number; heading: number; roll: number; pitch: number; lift: number } {
     const a = clamp(alpha, 0, 1);
     const p = this.prev;
+    const roll = this.visualRoll;
+    const pitch = this.visualPitch;
     return {
       x: p.x + (this.x - p.x) * a,
       y: p.y + (this.y - p.y) * a,
       z: p.z + (this.z - p.z) * a,
       heading: p.heading + wrapAngle(this.heading - p.heading) * a,
-      roll: p.roll + (this.bodyRoll - p.roll) * a,
-      pitch: p.pitch + (this.bodyPitch - p.pitch) * a,
+      roll: p.roll + (roll - p.roll) * a,
+      pitch: p.pitch + (pitch - p.pitch) * a,
+      lift: p.lift + (this.groundLift - p.lift) * a,
     };
   }
 }
+
+/**
+ * 算抬升用的车体足迹四角（车身局部坐标，y=0 即轮胎接地参考面）。
+ * 比实际车体稍收一点，避免在路肩边缘被一个孤立高点顶得跳起来。
+ */
+const FOOTPRINT: ReadonlyArray<readonly [number, number]> = [
+  [-0.95, -2.0], [0.95, -2.0], [-0.95, 2.0], [0.95, 2.0],
+];
+
+/** 接地余量（米）。见 computeGroundLift 末尾的说明 */
+const CONTACT_CLEARANCE = 0.03;
 
 /** 路面外侧的草地/路肩宽度，超出即撞护栏 */
 export const SHOULDER = 4.2;

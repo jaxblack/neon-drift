@@ -297,13 +297,20 @@ export class Race {
     }
   }
 
-  /** 车车碰撞：弹性推开 + 轻微失控 */
+  /**
+   * 车车碰撞。
+   *
+   * 刻意做成**非对称**：以前是两边平分冲量，结果不管谁撞谁，两台车都往后弹一样多，
+   * 像两个气球相撞 —— 完全没有"我把他撞飞了"的感觉。
+   * 现在按"谁在撞谁"给撞人方加质量：车头正对着对方冲过去的一方几乎不减速，
+   * 动量全灌到对方身上；再叠加一个垂直抛射，被撞的车会真的离地翻出去。
+   */
   private resolveKartCollisions(): void {
     const R = KART.radius;
     for (let i = 0; i < this.racers.length; i++) {
       for (let j = i + 1; j < this.racers.length; j++) {
-        const a = this.racers[i].kart;
-        const b = this.racers[j].kart;
+        const ra = this.racers[i], rb = this.racers[j];
+        const a = ra.kart, b = rb.kart;
         let dx = b.x - a.x, dz = b.z - a.z;
         const dy = b.y - a.y;
         if (Math.abs(dy) > 3) continue;
@@ -321,18 +328,47 @@ export class Race {
         const rvx = b.vx - a.vx, rvz = b.vz - a.vz;
         const vn = rvx * dx + rvz * dz;
         if (vn > 0) continue; // 已经在分离
-        const imp = -vn * 0.55 + KART.bumpImpulse * 0.12;
-        a.vx -= dx * imp; a.vz -= dz * imp;
-        b.vx += dx * imp; b.vz += dz * imp;
+        const closing = -vn;
 
-        const sev = clamp(-vn / 24, 0, 1);
-        if (sev > 0.25) {
-          const ra = this.racers[i], rb = this.racers[j];
-          if (ra.bumpCooldown <= 0) { ra.kart.hit('bump', sev); ra.bumpCooldown = 0.4; }
-          if (rb.bumpCooldown <= 0) { rb.kart.hit('bump', sev); rb.bumpCooldown = 0.4; }
+        // 攻击性 = 车头朝向与"指向对方"的法线的点积。
+        // 前向量 = (sin heading, cos heading)。1 = 正面撞上去，0 = 被追尾/侧面。
+        const aggrA = clamp(Math.sin(a.heading) * dx + Math.cos(a.heading) * dz, 0, 1);
+        const aggrB = clamp(Math.sin(b.heading) * -dx + Math.cos(b.heading) * -dz, 0, 1);
+        const massA = 1 + aggrA * KART.bumpRamMass * (a.boostTime > 0 ? KART.bumpBoostMul : 1);
+        const massB = 1 + aggrB * KART.bumpRamMass * (b.boostTime > 0 ? KART.bumpBoostMul : 1);
+        // 动量守恒式分配：自己越重，自己动得越少、对方飞得越远
+        const shareA = (2 * massB) / (massA + massB);
+        const shareB = (2 * massA) / (massA + massB);
+
+        const imp = closing * KART.bumpRestitution + KART.bumpImpulse * 0.12;
+        a.vx -= dx * imp * shareA; a.vz -= dz * imp * shareA;
+        b.vx += dx * imp * shareB; b.vz += dz * imp * shareB;
+
+        // 垂直抛射：只有够狠的撞击才抬起来，轻蹭不该让车跳
+        const launch = clamp((closing - KART.bumpLaunchThreshold) / 16, 0, 1) * KART.bumpLaunch;
+        if (launch > 0) {
+          a.vy += launch * shareA * 0.5;
+          b.vy += launch * shareB * 0.5;
+        }
+
+        const sev = clamp(closing / 24, 0, 1);
+        // 车身可见地一顿：撞击侧由法线在对方车身横轴上的投影决定。
+        // 封顶 1：share 最大能到 2，不封的话反冲角会大到把车角扭进路面里。
+        a.impactRecoil = Math.max(a.impactRecoil, Math.min(sev * shareA, 1));
+        b.impactRecoil = Math.max(b.impactRecoil, Math.min(sev * shareB, 1));
+        a.impactSide = (Math.cos(a.heading) * dx - Math.sin(a.heading) * dz) > 0 ? 1 : -1;
+        b.impactSide = (Math.cos(b.heading) * -dx - Math.sin(b.heading) * -dz) > 0 ? 1 : -1;
+
+        if (sev > 0.2) {
+          // 被撞得更狠的那一方才会失控打转，撞人的只是一顿
+          const spinA = sev * shareA > 0.85, spinB = sev * shareB > 0.85;
+          if (ra.bumpCooldown <= 0) { a.hit(spinA ? 'spin' : 'bump', sev * shareA); ra.bumpCooldown = 0.4; }
+          if (rb.bumpCooldown <= 0) { b.hit(spinB ? 'spin' : 'bump', sev * shareB); rb.bumpCooldown = 0.4; }
           if (ra.isPlayer || rb.isPlayer) {
-            this.audio.crash(sev * 0.7);
-            this.cb.onShake?.(sev * 0.5);
+            // 自己撞人和自己被撞，震动强度不一样 —— 被撞该更晃
+            const mine = ra.isPlayer ? shareA : shareB;
+            this.audio.crash(clamp(sev * mine, 0.15, 1));
+            this.cb.onShake?.(sev * mine * 0.85);
           }
           this.fx.bumpSparks(a, b);
         }

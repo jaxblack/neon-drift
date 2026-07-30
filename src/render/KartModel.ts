@@ -15,12 +15,6 @@ const AXIS_X = new THREE.Vector3(1, 0, 0);
 const AXIS_Y = new THREE.Vector3(0, 1, 0);
 const SPIN_Q = new THREE.Quaternion();
 
-/** 姿态补偿抬升用的车身半长 / 半宽（归一化后的车尺寸） */
-const HALF_LENGTH = 2.2;
-const HALF_WIDTH = 1.05;
-/** 抬升上限。不封顶的话狂甩尾时车会明显浮起来 */
-const MAX_ATTITUDE_LIFT = 0.38;
-
 // 尾焰配色用的临时对象，避免每帧 new
 const TMP_COLOR = new THREE.Color();
 const WHITE = new THREE.Color(0xffffff);
@@ -568,34 +562,17 @@ export class KartVisual {
 
   update(kart: Kart, alpha: number, dt: number): void {
     const p = kart.interp(alpha);
-    // 姿态补偿抬升。
-    //
-    // 车是刚体，物理只把**车中心**钉在接触点上，然后整车绕中心旋转。
-    // 于是只要有俯仰或侧倾，车头/车角就会沉到路面以下：
-    //   车长 4.4m、刹车点头 0.07 rad → 车头下沉 0.15m，实测就是这个量级。
-    // 而且 bodyPitch 是 damp 出来的，会滞后于真实坡度，固定离地间隙补不住。
-    // 按当前姿态算出最低角下沉了多少，抬回来就行——
-    // 真车有悬挂，本来也是压缩而不是刹进地里。
-    let lift = 0;
-    if (this.usingExternal) {
-      lift = Math.min(
-        Math.abs(Math.sin(p.pitch)) * HALF_LENGTH + Math.abs(Math.sin(p.roll)) * HALF_WIDTH,
-        MAX_ATTITUDE_LIFT,
-      );
-    }
-    this.root.position.set(p.x, p.y + lift, p.z);
+    // 姿态补偿抬升由物理层实测给出（Kart.computeGroundLift）：
+    // 那里把车体 4 个角的世界坐标算出来，跟真实路面高度一减，取最深的抬回去。
+    // 以前这里是按 pitch/roll 估的，估不准 —— 路面还有 banking 和纵向曲率，
+    // 光看车身姿态角根本不知道角落离路面多远。
+    this.root.position.set(p.x, p.y + p.lift, p.z);
     this.root.rotation.set(0, 0, 0);
     this.root.rotateY(p.heading);
     this.root.rotateX(p.pitch);
     this.root.rotateZ(-p.roll);
-    // 撞击反冲：车头往撞的那一侧一顿、车尾抬一下。
-    // 撞墙时如果车身姿态纹丝不动，再多的火花也只是贴在画面上的贴纸，
-    // 感觉不到"撞了一下"。
-    if (kart.impactRecoil > 0.01) {
-      const r = kart.impactRecoil;
-      this.root.rotateZ(kart.impactSide * r * 0.16);
-      this.root.rotateX(-r * 0.09);
-    }
+    // 撞击反冲不在这里额外旋转了 —— 已经合进 Kart.visualRoll/visualPitch。
+    // 否则物理层的抬升计算看不见这两个角，撞完那几帧车角会切进路面。
 
     // 尾灯倒影：离地时收掉（车都飞起来了还在路上留倒影很出戏），喷射时更亮
     this.tailReflectMat.opacity = kart.grounded

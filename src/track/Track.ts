@@ -409,10 +409,15 @@ export class Track {
       const d = -18 - row * 9;
       const s = this.sampleAt(d);
       const off = col * Math.min(s.half * 0.42, 5);
+      const x = s.x + s.lx * off;
+      const z = s.z + s.lz * off;
       out.push({
-        x: s.x + s.lx * off,
-        y: s.y + 0.4,
-        z: s.z + s.lz * off,
+        x,
+        // 必须用 surfaceHeight 而不是中心线采样的 s.y：
+        // 起跑格在中心线侧方 off 米处，路面带 banking，两者相差能到 0.8m。
+        // 以前写 s.y + 0.4 相当于把车直接塑在路面以下半米。
+        y: this.surfaceHeight(x, z).y + 0.05,
+        z,
         heading: Math.atan2(s.fx, s.fz),
       });
     }

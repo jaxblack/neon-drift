@@ -180,6 +180,38 @@ kbd {
 }
 
 /* 氮气：两格独立指示灯（比连续条更容易一眼读出“攻几格”） */
+/* 车型 chip：左侧直接摆一块车漆色。
+   只给名字的话，玩家得先选一次才知道"熜岩橙"长什么样。 */
+.car-chip { display: flex; align-items: center; gap: 9px; }
+.car-chip .swatch {
+  flex: none; width: 18px; height: 18px; border-radius: 5px;
+  border: 1px solid rgba(255,255,255,0.35);
+  box-shadow: 0 0 10px rgba(255,255,255,0.18), inset 0 -3px 6px rgba(0,0,0,0.35);
+}
+.car-chip.active .swatch { border-color: rgba(255,255,255,0.8); }
+.car-chip > span { display: block; text-align: left; }
+
+/* 撞墙卡住时的复位提示。
+   R 键一直都在，只是没人知道；不告诉玩家的话撞墙后只能在原地磨。 */
+.stuck-hint {
+  position: absolute; left: 50%; bottom: 22%;
+  transform: translate(-50%, 8px);
+  padding: 10px 18px; border-radius: 10px;
+  background: rgba(10,14,24,0.82); backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,210,63,0.5);
+  color: #ffe9a8; font-size: 15px; font-weight: 700; letter-spacing: 1px;
+  white-space: nowrap;
+  opacity: 0; pointer-events: none;
+  transition: opacity 0.25s ease, transform 0.25s ease;
+}
+.stuck-hint.show { opacity: 1; transform: translate(-50%, 0); }
+.stuck-hint kbd {
+  padding: 2px 8px; margin: 0 2px; font-size: 14px;
+  border-radius: 5px; background: rgba(255,210,63,0.16);
+  border: 1px solid rgba(255,210,63,0.55); border-bottom-width: 2px;
+  color: var(--gold);
+}
+
 /* 氮气。
    之前是 62x15 的细条配 9.5px 暗色标签，在比赛中几乎注意不到——
    而氮气是玩家唯一需要主动决策的资源，看不见等于这个机制不存在。

@@ -203,6 +203,37 @@ export const RACER_COLORS = [
   0x8b5cff, 0xff7a3d, 0xffffff, 0xff4d5e,
 ];
 
+/**
+ * 玩家可选车型。
+ *
+ * 只有一个 glTF 车体，靠车漆做区分——每加一台真车模就多十几 MB 首包，
+ * 而"换车"这件事玩家感知到的九成是外观。所以这里换的是漆面：
+ * 底色 + 金属度 + 粗糙度 + 清漆，四个参数就能拉开"糖果漆 / 珠光 / 哑光 / 碳纤"
+ * 这些差别很大的质感，零额外下载。
+ */
+export interface CarPreset {
+  id: string;
+  name: string;
+  desc: string;
+  color: number;
+  metalness: number;
+  roughness: number;
+  clearcoat: number;
+}
+
+export const CAR_PRESETS: CarPreset[] = [
+  { id: 'neon', name: '霓虹青', desc: '糖果漆 · 高反光', color: 0x22e6ff, metalness: 0.85, roughness: 0.16, clearcoat: 1 },
+  { id: 'magma', name: '熔岩橙', desc: '金属漆 · 火焰质感', color: 0xff5a1e, metalness: 0.9, roughness: 0.22, clearcoat: 1 },
+  { id: 'graphite', name: '石墨黑', desc: '哑光 · 低调凶悍', color: 0x1c2029, metalness: 0.45, roughness: 0.62, clearcoat: 0.35 },
+  { id: 'pearl', name: '珍珠白', desc: '珠光 · 细腻反射', color: 0xf2f4ff, metalness: 0.55, roughness: 0.24, clearcoat: 1 },
+  { id: 'venom', name: '毒液绿', desc: '荧光 · 极限视认', color: 0x35f5a0, metalness: 0.8, roughness: 0.18, clearcoat: 1 },
+  { id: 'royal', name: '皇家紫', desc: '深色金属 · 层次感', color: 0x7b3dff, metalness: 0.92, roughness: 0.2, clearcoat: 1 },
+  { id: 'blood', name: '烈焰红', desc: '经典赛车红', color: 0xe2143c, metalness: 0.82, roughness: 0.19, clearcoat: 1 },
+  { id: 'gold', name: '流金', desc: '镀金 · 张扬', color: 0xffc93f, metalness: 1, roughness: 0.12, clearcoat: 1 },
+];
+
+export const DEFAULT_CAR_ID = CAR_PRESETS[0].id;
+
 export const RACER_NAMES = [
   '闪电狼', '夜行者', '涡轮猫', '赤焰',
   '零式', '银翼', '雷霆', '幻影',

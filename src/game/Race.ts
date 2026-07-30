@@ -10,7 +10,7 @@ import { Effects } from '../render/Effects';
 import type { Stage } from '../render/Stage';
 import type { AudioEngine } from '../core/Audio';
 import { consumeEdges, emptyInput, type InputState } from '../core/Input';
-import { RACE, RACER_COLORS, RACER_NAMES, KART, type Difficulty } from '../core/Config';
+import { RACE, RACER_COLORS, RACER_NAMES, KART, CAR_PRESETS, type Difficulty } from '../core/Config';
 import { clamp } from '../core/MathUtil';
 import type { PreparedCarModel } from '../render/CarModelLoader';
 
@@ -20,6 +20,8 @@ export interface RaceConfig {
   aiCount: number;
   difficulty: Difficulty;
   playerName: string;
+  /** 玩家车型（漆面预设 id）。找不到时回落到第一个 */
+  carId?: string;
 }
 
 export type RaceState = 'countdown' | 'racing' | 'finished';
@@ -84,13 +86,20 @@ export class Race {
     const playerSlot = total - 1;
     for (let i = 0; i < total; i++) {
       const isPlayer = i === playerSlot;
-      // 玩家固定拿 0 号霓虹青，在任何主题下都最醒目
-      const color = isPlayer ? RACER_COLORS[0] : RACER_COLORS[(i + 1) % RACER_COLORS.length];
+      // 玩家车漆用菜单里选的车型；AI 继续沿用阵营色轮换，
+      // 但要避开玩家色，否则小地图和后视镜里分不清自己
+      const preset = CAR_PRESETS.find((c) => c.id === config.carId) ?? CAR_PRESETS[0];
+      const color = isPlayer
+        ? preset.color
+        : RACER_COLORS[(i + 1) % RACER_COLORS.length];
       const name = isPlayer ? config.playerName : RACER_NAMES[i % RACER_NAMES.length];
       const kart = new Kart(this.track);
       const g = grid[i];
       kart.reset(g.x, g.y, g.z, g.heading);
-      const visual = new KartVisual({ color, isPlayer, model: this.carModel });
+      const visual = new KartVisual({
+        color, isPlayer, model: this.carModel,
+        finish: isPlayer ? preset : undefined,
+      });
       if (!isPlayer) visual.setLabel(name, color);
       stage.scene.add(visual.root);
 

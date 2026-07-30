@@ -9,7 +9,7 @@ import { Race, type RaceConfig } from './game/Race';
 import { TRACKS } from './track/Track';
 import { Hud, renderResults, escapeHtml } from './ui/Hud';
 import { TouchControls, isTouchDevice, requestGyroPermission, type SteerMode } from './ui/TouchControls';
-import { KART, type Difficulty } from './core/Config';
+import { KART, CAR_PRESETS, DEFAULT_CAR_ID, type Difficulty } from './core/Config';
 
 // ============================================================
 // 设置
@@ -28,6 +28,8 @@ interface Settings {
   autoThrottle: boolean;
   /** 陀螺仪满舵倾角（度），越小越灵敏 */
   gyroRange: number;
+  /** 玩家车型（漆面预设） */
+  carId: string;
 }
 
 const SAVE_KEY = 'neon-drift/settings/v2';
@@ -38,6 +40,7 @@ function loadSettings(): Settings {
     difficulty: 'normal', playerName: '你',
     quality: guessQuality(), audio: true,
     steerMode: 'wheel', autoThrottle: false, gyroRange: 26,
+    carId: DEFAULT_CAR_ID,
   };
   try {
     const raw = localStorage.getItem(SAVE_KEY);
@@ -52,6 +55,7 @@ function loadSettings(): Settings {
       aiCount: typeof s.aiCount === 'number' && s.aiCount >= 0 && s.aiCount <= 7 ? s.aiCount : def.aiCount,
       steerMode: s.steerMode === 'gyro' ? 'gyro' : def.steerMode,
       gyroRange: [18, 26, 34].includes(s.gyroRange as number) ? s.gyroRange! : def.gyroRange,
+      carId: CAR_PRESETS.some((c) => c.id === s.carId) ? s.carId! : def.carId,
     };
   } catch {
     return def;
@@ -233,6 +237,7 @@ function startRace(): void {
       aiCount: settings.aiCount,
       difficulty: settings.difficulty,
       playerName: settings.playerName,
+      carId: settings.carId,
     };
     race = new Race(stage, audio, cfg, carModel);
     wireRaceCallbacks(race);
@@ -339,6 +344,34 @@ function buildTrackPicker(): void {
   }
 }
 
+/**
+ * 车型（漆面）选择。
+ * 每个 chip 左侧带一块实色，直接把车漆颜色摆出来——
+ * 光看名字选颜色是个很别扭的体验。
+ */
+function buildCarPicker(): void {
+  const box = document.getElementById('car-picker');
+  if (!box) return;
+  box.innerHTML = '';
+  for (const c of CAR_PRESETS) {
+    const b = document.createElement('button');
+    b.className = 'chip car-chip' + (c.id === settings.carId ? ' active' : '');
+    b.dataset.car = c.id;
+    const hex = `#${c.color.toString(16).padStart(6, '0')}`;
+    b.innerHTML =
+      `<i class="swatch" style="background:${hex}"></i>`
+      + `<span>${escapeHtml(c.name)}<small>${escapeHtml(c.desc)}</small></span>`;
+    b.onclick = () => {
+      settings.carId = c.id;
+      saveSettings(settings);
+      box.querySelectorAll('.chip').forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      audio.ui();
+    };
+    box.appendChild(b);
+  }
+}
+
 function bindPicker(id: string, key: keyof Settings, attr: string, parse: (v: string) => unknown, after?: () => void): void {
   const box = document.getElementById(id);
   if (!box) return;
@@ -361,6 +394,7 @@ function bindPicker(id: string, key: keyof Settings, attr: string, parse: (v: st
 }
 
 buildTrackPicker();
+buildCarPicker();
 bindPicker('laps-picker', 'laps', 'laps', (v) => Number(v));
 bindPicker('ai-picker', 'aiCount', 'ai', (v) => Number(v));
 bindPicker('diff-picker', 'difficulty', 'diff', (v) => v);

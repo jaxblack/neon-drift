@@ -376,15 +376,14 @@ export class Kart {
       }
 
       // ---- 起漂 ----
+      // QQ飞车式：必须「漂移键 + 方向键」同时按才起漂。
+      // 之前还有一条分支——没打方向时按赛道前方的弯向自动选漂移方向，
+      // 本意是照顾连喷时手指来不及同时动，实际效果是"一按漂移键车自己就甩出去了"，
+      // 玩家失去了对起漂时机和方向的控制权。宁可连喷难一点，也要把方向盘还给玩家。
       if (input.drift && this.grounded && this.speed > KART.driftMinSpeed) {
-        let dir: -1 | 0 | 1 = 0;
-        if (Math.abs(input.steer) > 0.12) {
-          dir = input.steer > 0 ? 1 : -1;
-        } else if (input.driftPressed) {
-          // 没有转向输入时，顺着弯道方向起漂（对连喷很关键：手指来不及同时动）
-          const ahead = this.track.sampleAt(this.trackDist + 18);
-          if (Math.abs(ahead.curv) > 0.0016) dir = ahead.curv > 0 ? -1 : 1;
-        }
+        const dir: -1 | 0 | 1 = Math.abs(input.steer) > 0.12
+          ? (input.steer > 0 ? 1 : -1)
+          : 0;
         if (dir !== 0) {
           this.drifting = true;
           this.driftDir = dir;

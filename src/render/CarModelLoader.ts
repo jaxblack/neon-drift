@@ -260,8 +260,13 @@ function materialsOf(mesh: THREE.Mesh): THREE.Material[] {
 /**
  * 给每台车克隆一份。
  * 几何体共享（clone 只复制节点树），车漆材质单独 clone 出来好染阵营色。
+ * 传了 finish 就连漆面质感（金属度/粗糙度/清漆）一起换——玩家选车型靠的就是这个。
  */
-export function instantiate(prepared: PreparedCarModel, color: THREE.Color): {
+export function instantiate(
+  prepared: PreparedCarModel,
+  color: THREE.Color,
+  finish?: { metalness: number; roughness: number; clearcoat: number },
+): {
   scene: THREE.Group; wheels: THREE.Object3D[];
 } {
   const scene = prepared.scene.clone(true);
@@ -277,6 +282,12 @@ export function instantiate(prepared: PreparedCarModel, color: THREE.Color): {
       if (!paintNames.has(m.name)) return m; // 非车漆部分共享，省显存
       const c = (m as THREE.MeshStandardMaterial).clone();
       c.color.copy(color);
+      if (finish) {
+        c.metalness = finish.metalness;
+        c.roughness = finish.roughness;
+        const phys = c as THREE.MeshPhysicalMaterial;
+        if (phys.clearcoat !== undefined) phys.clearcoat = finish.clearcoat;
+      }
       // 打个标记，KartVisual.dispose 只释放这些逐车克隆出来的材质，
       // 共享模板材质不能碰（其它车还在用）
       (c as THREE.Material & { __cloned?: boolean }).__cloned = true;

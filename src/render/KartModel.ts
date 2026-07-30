@@ -21,6 +21,10 @@ const HALF_WIDTH = 1.05;
 /** 抬升上限。不封顶的话狂甩尾时车会明显浮起来 */
 const MAX_ATTITUDE_LIFT = 0.38;
 
+// 尾焰配色用的临时对象，避免每帧 new
+const TMP_COLOR = new THREE.Color();
+const WHITE = new THREE.Color(0xffffff);
+
 /** 车身放样截面。n 越大截面越接近方角，越小越接近椭圆。 */
 interface Section { z: number; w: number; h: number; y: number; n: number }
 
@@ -273,6 +277,8 @@ export interface KartVisualOptions {
   isPlayer: boolean;
   /** 外部 glTF 车模。不传就用程序化车模 */
   model?: PreparedCarModel | null;
+  /** 漆面质感（玩家选的车型）。不传用默认金属漆 */
+  finish?: { metalness: number; roughness: number; clearcoat: number };
 }
 
 /** 一辆车的全部可视元素 */
@@ -282,6 +288,9 @@ export class KartVisual {
   private wheels: THREE.Mesh[] = [];
   private flames: THREE.Mesh[] = [];
   private flameMat: THREE.MeshBasicMaterial;
+  /** 尾焰内层白炽核心 */
+  private flameCores: THREE.Mesh[] = [];
+  private flameCoreMat: THREE.MeshBasicMaterial;
   /** 漂移飘焰（后轮外侧） */
   private driftFlames: THREE.Mesh[] = [];
   private driftFlameMat: THREE.MeshBasicMaterial;
@@ -397,18 +406,30 @@ export class KartVisual {
       this.root.add(w);
     }
 
-    // 尾焰
+    // 尾焰。
+    // 单层锥体看起来就是一块半透明色块。真正像"喷火"的是层次：
+    // 外层长而淡的彩色羽流 + 内层短而白炽的核心，两层叠加才有温度梯度。
     this.flameMat = new THREE.MeshBasicMaterial({
       color: 0x66ccff, transparent: true, opacity: 0.55,
       blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false,
     });
-    this.owned.push(this.flameMat);
+    this.flameCoreMat = new THREE.MeshBasicMaterial({
+      color: 0xffffff, transparent: true, opacity: 0,
+      blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false,
+    });
+    this.owned.push(this.flameMat, this.flameCoreMat);
     for (const sx of [-0.42, 0.42]) {
       const f = new THREE.Mesh(S.flame, this.flameMat);
       f.position.set(sx, 0.60, -2.35);
       f.visible = false;
       this.flames.push(f);
       this.root.add(f);
+
+      const core = new THREE.Mesh(S.flame, this.flameCoreMat);
+      core.position.set(sx, 0.60, -2.30);
+      core.visible = false;
+      this.flameCores.push(core);
+      this.root.add(core);
     }
 
     // 漂移飘焰：从后轮往后外侧喷，颜色随集气档位走
@@ -479,7 +500,7 @@ export class KartVisual {
 
     // 有外部车模就换掉程序化车身。灯光/尾焰/胎印/光斑这些特效层继续用自己的，
     // 因为它们和物理状态绑定，不依赖车身几何。
-    if (opts.model) this.useExternalModel(opts.model, color);
+    if (opts.model) this.useExternalModel(opts.model, color, opts.finish);
   }
 
   /**
@@ -489,17 +510,21 @@ export class KartVisual {
    * 保留特效层（尾焰、飘焰、车底辉光、车头灯光斑、尾灯倒影）——
    * 那些是按物理状态驱动的，和用哪个车模无关。
    */
-  private useExternalModel(model: PreparedCarModel, color: THREE.Color): void {
+  private useExternalModel(
+    model: PreparedCarModel,
+    color: THREE.Color,
+    finish?: { metalness: number; roughness: number; clearcoat: number },
+  ): void {
     // 特效层按引用排除，剩下的 root 子节点就是程序化车壳
     const fx = new Set<THREE.Object3D>([
-      ...this.flames, ...this.driftFlames,
+      ...this.flames, ...this.flameCores, ...this.driftFlames,
       this.underglow, this.headBeam, this.tailReflect,
     ]);
     this.shellParts = this.root.children.filter((c) => !fx.has(c));
     for (const m of this.shellParts) m.visible = false;
     this.wheels.length = 0;
 
-    const inst = instantiate(model, color);
+    const inst = instantiate(model, color, finish);
     this.externalModel = inst.scene;
     this.root.add(inst.scene);
     // 外部模型能认出轮子就接上转动，认不出也不影响其它部分
@@ -605,21 +630,32 @@ export class KartVisual {
     const target = boosting ? 1 : 0;
     this.flameScale = damp(this.flameScale, target, boosting ? 26 : 13, dt);
     const vis = this.flameScale > 0.03;
-    const flicker = 0.82 + Math.random() * 0.36;
-    for (const f of this.flames) {
-      f.visible = vis;
-      if (vis) {
-        const s = this.flameScale * flicker;
-        f.scale.set(0.7 + s * 0.7, 0.7 + s * 0.7, 0.4 + s * 1.9);
-        f.position.z = -2.3 - this.flameScale * 0.6;
-      }
+    for (let i = 0; i < this.flames.length; i++) {
+      const f = this.flames[i];
+      const core = this.flameCores[i];
+      f.visible = core.visible = vis;
+      if (!vis) continue;
+      // 两侧各自抖动。之前两边共用一个随机值，同步脉动看着很机械，
+      // 真实的喷口是各喷各的。
+      const flicker = 0.8 + Math.random() * 0.4;
+      const s = this.flameScale * flicker;
+      f.scale.set(0.7 + s * 0.7, 0.7 + s * 0.7, 0.4 + s * 2.2);
+      f.position.z = -2.3 - this.flameScale * 0.6;
+      // 内核更短更细，抖得更快 —— 叠加出温度梯度
+      const cs = this.flameScale * (0.85 + Math.random() * 0.3);
+      core.scale.set(0.34 + cs * 0.34, 0.34 + cs * 0.34, 0.25 + cs * 1.05);
+      core.position.z = -2.26 - this.flameScale * 0.3;
     }
     if (vis) {
       const col = kart.boostKind === 'nitro' ? NITRO_COLOR
         : kart.boostKind === 'pad' ? 0x35f5a0
           : TIER_COLORS[Math.min(3, 1 + kart.comboLevel)];
       this.flameMat.color.lerp(new THREE.Color(col), 0.35);
-      this.flameMat.opacity = 0.3 + this.flameScale * 0.28;
+      this.flameMat.opacity = 0.3 + this.flameScale * 0.34;
+      // 核心往白里偏一点点，但保留一丝焰色，纯白会糊成一团
+      TMP_COLOR.set(col).lerp(WHITE, 0.72);
+      this.flameCoreMat.color.lerp(TMP_COLOR, 0.4);
+      this.flameCoreMat.opacity = this.flameScale * 0.5;
     }
 
     // 漂移飘焰：集气越高越大越亮，颜色跟着档位走（蓝→紫→金）

@@ -25,8 +25,7 @@
             <div class="t-row small"><span>本圈</span><b id="hud-lap-time">00:00.00</b></div>
             <div class="t-row small best"><span>最佳</span><b id="hud-best-time">--:--.--</b></div>
           </div>
-          <div class="nitro-box" id="nitro-box">
-            <div class="nitro-head"><span>氮气 N₂O</span><kbd>Ctrl</kbd></div>
+          <div class="nitro-box" id="nitro-box">            <div class="nitro-head"><span>氮气 N₂O</span><kbd>Ctrl</kbd></div>
             <div class="nitro-cells" id="nitro-cells">
               <div class="ncell"><i></i></div>
               <div class="ncell"><i></i></div>
@@ -62,6 +61,8 @@
         <div id="center-toast" class="center-toast"></div>
         <div id="combo-toast" class="combo-toast"></div>
         <div id="countdown" class="countdown hidden"></div>
+        <!-- 撞墙后卡住时提示复位键 -->
+        <div id="stuck-hint" class="stuck-hint">敲 <kbd>R</kbd> 回到赛道</div>
 
         <!-- 名次条 -->
         <div id="standings" class="standings"></div>
@@ -112,6 +113,11 @@
           <div class="menu-section">
             <label class="sec-title">赛道</label>
             <div id="track-picker" class="chip-row"></div>
+          </div>
+
+          <div class="menu-section">
+            <label class="sec-title">车型</label>
+            <div id="car-picker" class="chip-row"></div>
           </div>
 
           <div class="menu-section">

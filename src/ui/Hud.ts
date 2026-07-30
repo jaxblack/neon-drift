@@ -22,6 +22,8 @@ export class Hud {
   private dial = $<HTMLElement>('dial-fill');
   private speedo = document.querySelector('.speedo') as HTMLElement;
   private nitroBox = $('nitro-box');
+  private elStuck = $('stuck-hint');
+  private stuckTimer = 0;
   private nitroCells = Array.from(
     $('nitro-cells').querySelectorAll<HTMLElement>('.ncell'),
   ).map((cell) => ({ cell, fill: cell.querySelector('i') as HTMLElement }));
@@ -116,6 +118,13 @@ export class Hud {
     if (k.wrongWay && k.speed > 12 && this.toastTimer <= 0) this.toastMsg('逆行！掉头', '#ff4d5e');
     if (this.toastTimer > 0) this.toastTimer -= dt;
     if (this.comboTimer > 0) this.comboTimer -= dt;
+
+    // ---- 卡住提示 ----
+    // 复位键（R）一直都在，但没人知道——撞墙之后玩家只会在原地慢慢磨，
+    // 体验很差。低速持续一段时间就把这条路指给他看。
+    const stuck = k.speed < 9 && race.state === 'racing';
+    this.stuckTimer = stuck ? this.stuckTimer + dt : 0;
+    this.elStuck.classList.toggle('show', this.stuckTimer > 1.4);
 
     // ---- 名次条 ----
     this.updateStandings(race);

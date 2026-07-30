@@ -7,6 +7,7 @@ import { Stage, type Quality } from './render/Stage';
 import { Race, type RaceConfig } from './game/Race';
 import { TRACKS } from './track/Track';
 import { Hud, renderResults, escapeHtml } from './ui/Hud';
+import { TouchControls, isTouchDevice, requestGyroPermission, type SteerMode } from './ui/TouchControls';
 import { KART, type Difficulty } from './core/Config';
 
 // ============================================================
@@ -20,6 +21,12 @@ interface Settings {
   playerName: string;
   quality: Quality;
   audio: boolean;
+  /** 移动端转向方式 */
+  steerMode: SteerMode;
+  /** 移动端自动油门 */
+  autoThrottle: boolean;
+  /** 陀螺仪满舵倾角（度），越小越灵敏 */
+  gyroRange: number;
 }
 
 const SAVE_KEY = 'neon-drift/settings/v2';
@@ -29,6 +36,7 @@ function loadSettings(): Settings {
     trackId: TRACKS[0].id, laps: 3, aiCount: 5,
     difficulty: 'normal', playerName: '你',
     quality: guessQuality(), audio: true,
+    steerMode: 'wheel', autoThrottle: false, gyroRange: 26,
   };
   try {
     const raw = localStorage.getItem(SAVE_KEY);
@@ -41,6 +49,8 @@ function loadSettings(): Settings {
       trackId: TRACKS.some((t) => t.id === s.trackId) ? s.trackId! : def.trackId,
       laps: [1, 3, 5].includes(s.laps as number) ? s.laps! : def.laps,
       aiCount: typeof s.aiCount === 'number' && s.aiCount >= 0 && s.aiCount <= 7 ? s.aiCount : def.aiCount,
+      steerMode: s.steerMode === 'gyro' ? 'gyro' : def.steerMode,
+      gyroRange: [18, 26, 34].includes(s.gyroRange as number) ? s.gyroRange! : def.gyroRange,
     };
   } catch {
     return def;
@@ -81,6 +91,47 @@ const stage = new Stage(canvas, settings.quality);
 const audio = new AudioEngine();
 const input = new Input(canvas);
 const hud = new Hud();
+
+// ---------- 移动端 ----------
+const touchDevice = isTouchDevice();
+let touch: TouchControls | null = null;
+
+if (touchDevice) {
+  document.body.classList.add('touch-mode');
+  document.querySelectorAll('.touch-only').forEach((el) => el.classList.remove('hidden'));
+  touch = new TouchControls(input, {
+    steerMode: settings.steerMode,
+    autoThrottle: settings.autoThrottle,
+    gyroRange: settings.gyroRange,
+  });
+  touch.onPause = () => { if (race && result.classList.contains('hidden')) togglePause(); };
+  touch.onCamera = () => input.onCamera?.();
+  touch.onCalibrate = () => hud.toastMsg('方向已校准', '#35f5a0');
+  touch.onGyroUnavailable = () => {
+    hud.toastMsg('未检测到陀螺仪，已切回摇杆', '#ff4d5e');
+    settings.steerMode = 'wheel';
+    saveSettings(settings);
+    syncTouchSettings();
+    markActive('steer-picker', 'steer', 'wheel');
+  };
+}
+
+function syncTouchSettings(): void {
+  touch?.applySettings({
+    steerMode: settings.steerMode,
+    autoThrottle: settings.autoThrottle,
+    gyroRange: settings.gyroRange,
+  });
+}
+
+/** 让某个 picker 里 data-<attr>=value 的 chip 高亮 */
+function markActive(boxId: string, attr: string, value: string): void {
+  const box = document.getElementById(boxId);
+  if (!box) return;
+  box.querySelectorAll<HTMLButtonElement>('.chip').forEach((c) => {
+    c.classList.toggle('active', c.dataset[attr] === value);
+  });
+}
 
 let race: Race | null = null;
 let paused = false;
@@ -132,7 +183,12 @@ const loop = new GameLoop(
 let pendingInput: InputState = emptyInput();
 
 function sampleLoopInput(dt: number): void {
-  pendingInput = race && !paused ? input.sample(dt) : emptyInput();
+  if (race && !paused) {
+    touch?.update();
+    pendingInput = input.sample(dt);
+  } else {
+    pendingInput = emptyInput();
+  }
 }
 
 // 用 rAF 在 GameLoop 之前采样输入
@@ -170,6 +226,7 @@ function startRace(): void {
     hud.setTrack(race);
     hud.show();
     input.reset();
+    touch?.show();
     paused = false;
     loading.classList.add('hidden');
     void audio.start();
@@ -216,6 +273,7 @@ function showResults(standings: ReturnType<Race['standings']>): void {
   $('result-rows').innerHTML = renderResults(standings, settings.laps);
   result.classList.remove('hidden');
   hud.hide();
+  touch?.hide();
   audio.silence();
 }
 
@@ -228,6 +286,7 @@ function disposeRace(): void {
 function quitToMenu(): void {
   disposeRace();
   hud.hide();
+  touch?.hide();
   hud.reset();
   audio.silence();
   paused = false;
@@ -240,7 +299,7 @@ function togglePause(): void {
   if (!race) return;
   paused = !paused;
   pause.classList.toggle('hidden', !paused);
-  if (paused) { audio.silence(); input.reset(); }
+  if (paused) { audio.silence(); input.reset(); touch?.reset(); }
   audio.ui();
 }
 
@@ -266,7 +325,7 @@ function buildTrackPicker(): void {
   }
 }
 
-function bindPicker(id: string, key: keyof Settings, attr: string, parse: (v: string) => unknown): void {
+function bindPicker(id: string, key: keyof Settings, attr: string, parse: (v: string) => unknown, after?: () => void): void {
   const box = document.getElementById(id);
   if (!box) return;
   box.querySelectorAll<HTMLButtonElement>('.chip').forEach((b) => {
@@ -281,6 +340,7 @@ function bindPicker(id: string, key: keyof Settings, attr: string, parse: (v: st
       saveSettings(settings);
       box.querySelectorAll('.chip').forEach((c) => c.classList.remove('active'));
       b.classList.add('active');
+      after?.();
       audio.ui();
     };
   });
@@ -291,7 +351,32 @@ bindPicker('laps-picker', 'laps', 'laps', (v) => Number(v));
 bindPicker('ai-picker', 'aiCount', 'ai', (v) => Number(v));
 bindPicker('diff-picker', 'difficulty', 'diff', (v) => v);
 
-$('btn-start').onclick = () => { void audio.start(); startRace(); };
+if (touchDevice) {
+  $('touch-settings').classList.remove('hidden');
+  markActive('steer-picker', 'steer', settings.steerMode);
+  markActive('throttle-picker', 'auto', settings.autoThrottle ? '1' : '0');
+  markActive('gyro-range-picker', 'range', String(settings.gyroRange));
+
+  document.querySelectorAll<HTMLButtonElement>('#steer-picker .chip').forEach((b) => {
+    b.onclick = async () => {
+      const mode = (b.dataset.steer === 'gyro' ? 'gyro' : 'wheel') as SteerMode;
+      // iOS 需要在用户手势里申请传感器权限
+      if (mode === 'gyro' && !(await requestGyroPermission())) {
+        hud.toastMsg('陀螺仪权限被拒绝', '#ff4d5e');
+        return;
+      }
+      settings.steerMode = mode;
+      saveSettings(settings);
+      markActive('steer-picker', 'steer', mode);
+      syncTouchSettings();
+      audio.ui();
+    };
+  });
+  bindPicker('throttle-picker', 'autoThrottle', 'auto', (v) => v === '1', syncTouchSettings);
+  bindPicker('gyro-range-picker', 'gyroRange', 'range', (v) => Number(v), syncTouchSettings);
+}
+
+$('btn-start').onclick = () => { void audio.start(); void goImmersive(); startRace(); };
 $('btn-help').onclick = () => { help.classList.remove('hidden'); audio.ui(); };
 $('btn-help-close').onclick = () => { help.classList.add('hidden'); audio.ui(); };
 $('btn-resume').onclick = () => togglePause();
@@ -301,9 +386,32 @@ $('btn-again').onclick = () => startRace();
 $('btn-menu').onclick = () => quitToMenu();
 
 // ============================================================
+// 移动端沉浸模式 / 竖屏提示
+// ============================================================
+/** 手机上开赛时尽量进入全屏并锁定横屏（不支持就静默忽略） */
+async function goImmersive(): Promise<void> {
+  if (!touchDevice) return;
+  try {
+    if (!document.fullscreenElement) await app.requestFullscreen?.();
+  } catch { /* 用户或浏览器拒绝，忽略 */ }
+  try {
+    const o = screen.orientation as ScreenOrientation & { lock?: (v: string) => Promise<void> };
+    await o?.lock?.('landscape');
+  } catch { /* 桌面/iOS 不支持，忽略 */ }
+}
+
+const rotateHint = $('rotate-hint');
+function updateRotateHint(): void {
+  const portrait = window.innerHeight > window.innerWidth;
+  rotateHint.classList.toggle('hidden', !(touchDevice && portrait));
+}
+updateRotateHint();
+
+// ============================================================
 // 窗口事件
 // ============================================================
-window.addEventListener('resize', () => stage.resize());
+window.addEventListener('resize', () => { stage.resize(); updateRotateHint(); });
+window.addEventListener('orientationchange', () => updateRotateHint());
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) {
     audio.suspend();

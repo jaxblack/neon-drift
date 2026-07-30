@@ -221,7 +221,11 @@ export class Race {
     this.checkBoostPads();
     this.updateRanks();
 
-    if (this.state !== 'finished' && this.racers.every((r) => r.finished)) {
+    // 玩家冲线即结束。
+    // 之前要等 racers.every(finished)，意味着自己先到之后还得看 AI 一辆辆慢慢跑完，
+    // 这段时间玩家完全无事可做。未完赛的 AI 名次由 updateRanks 按赛道进度给出，
+    // 本来就是对的，提前结束不会把名次算错。
+    if (this.state !== 'finished' && this.player.finished) {
       this.state = 'finished';
       this.cb.onRaceOver?.(this.standings());
     }

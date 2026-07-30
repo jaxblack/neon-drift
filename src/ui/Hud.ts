@@ -158,11 +158,15 @@ export function escapeHtml(s: string): string {
 
 /** 结算表格 */
 export function renderResults(standings: Racer[], laps: number): string {
-  void laps;
   let html = '';
   for (const r of standings) {
     const posClass = r.rank <= 3 ? ` p${r.rank}` : '';
-    const time = r.finished ? formatTime(r.finishTime) : 'DNF';
+    // 玩家冲线就结束比赛，所以没跑完的对手不是"退赛"，只是被提前叫停了。
+    // 标 DNF 会让人以为它们撞毁了。多圈赛显示跑到第几圈还有信息量；
+    // 单圈赛写"第 1/1 圈"反而像是跑完了，直接写未完赛。
+    const time = r.finished
+      ? formatTime(r.finishTime)
+      : laps > 1 ? `第 ${Math.min(r.lap, laps)}/${laps} 圈` : '未完赛';
     const best = isFinite(r.bestLap) ? formatTime(r.bestLap) : '--:--.--';
     html += `<tr class="${r.isPlayer ? 'me' : ''}">`
       + `<td class="pos${posClass}">${r.rank}</td>`

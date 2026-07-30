@@ -289,6 +289,12 @@ export class KartVisual {
   private driftFlames: THREE.Mesh[] = [];
   private driftFlameMat: THREE.MeshBasicMaterial;
   private driftFlameScale = 0;
+
+  // 排气口锚点。程序化车壳的默认值，接外部车模时按实测包围盒覆盖。
+  // 写死常数在换车模后会把火焰长到尾厢盖上——法拉利比程序化车壳矮一大截。
+  private exhaustX = 0.42;
+  private exhaustY = 0.60;
+  private exhaustZ = -2.3;
   private underglow: THREE.Mesh;
   private underglowMat: THREE.MeshBasicMaterial;
   /** 车头灯打在路面上的光斑 */
@@ -412,15 +418,15 @@ export class KartVisual {
       blending: THREE.AdditiveBlending, depthWrite: false, side: THREE.DoubleSide, toneMapped: false,
     });
     this.owned.push(this.flameMat, this.flameCoreMat);
-    for (const sx of [-0.42, 0.42]) {
+    for (const sx of [-1, 1]) {
       const f = new THREE.Mesh(S.flame, this.flameMat);
-      f.position.set(sx, 0.60, -2.35);
+      f.position.set(sx * this.exhaustX, this.exhaustY, this.exhaustZ - 0.05);
       f.visible = false;
       this.flames.push(f);
       this.root.add(f);
 
       const core = new THREE.Mesh(S.flame, this.flameCoreMat);
-      core.position.set(sx, 0.60, -2.30);
+      core.position.set(sx * this.exhaustX, this.exhaustY, this.exhaustZ);
       core.visible = false;
       this.flameCores.push(core);
       this.root.add(core);
@@ -525,6 +531,43 @@ export class KartVisual {
     this.wheels.push(...(inst.wheels as THREE.Mesh[]));
     this.wheelBase = this.wheels.map((w) => w.quaternion.clone());
     this.usingExternal = true;
+    this.fitEffectsTo(inst.scene, this.wheels);
+  }
+
+  /**
+   * 把特效锚点对到这台车模的实际尺寸上。
+   *
+   * 尾焰、飘焰原来的坐标是照着程序化车壳量的。换成真车模后车身高度、
+   * 轴距、宽度都不一样 —— 法拉利低趴，0.60 的排气高度会落在尾厢盖上，
+   * 于是加速时火焰是从车顶"长"出来的，糊成一团白光。
+   * 直接从包围盒和轮子位置推，换任何车模都不用再手调。
+   */
+  private fitEffectsTo(scene: THREE.Object3D, wheels: THREE.Object3D[]): void {
+    const box = new THREE.Box3().setFromObject(scene);
+    if (box.isEmpty()) return;
+    const size = box.getSize(new THREE.Vector3());
+
+    // 排气口：车尾端面、离地约 1/4 车高、左右靠内
+    this.exhaustX = size.x * 0.20;
+    this.exhaustY = box.min.y + size.y * 0.26;
+    this.exhaustZ = box.min.z + 0.05;
+    for (let i = 0; i < this.flames.length; i++) {
+      const sx = i === 0 ? -1 : 1;
+      this.flames[i].position.set(sx * this.exhaustX, this.exhaustY, this.exhaustZ - 0.05);
+      this.flameCores[i].position.set(sx * this.exhaustX, this.exhaustY, this.exhaustZ);
+    }
+
+    // 飘焰：贴在后轮上，没认出轮子就退回按包围盒估
+    const rear = [...wheels].sort((a, b) => a.position.z - b.position.z).slice(0, 2);
+    for (let i = 0; i < this.driftFlames.length; i++) {
+      const sx = i === 0 ? -1 : 1;
+      const w = rear.find((r) => Math.sign(r.position.x) === sx);
+      this.driftFlames[i].position.set(
+        w ? w.position.x : sx * size.x * 0.48,
+        (w ? w.position.y : box.min.y + size.y * 0.18) + 0.04,
+        (w ? w.position.z : box.min.z + size.z * 0.18) - 0.12,
+      );
+    }
   }
 
   /** 头顶名牌（AI / 联机玩家） */
@@ -617,11 +660,11 @@ export class KartVisual {
       const flicker = 0.8 + Math.random() * 0.4;
       const s = this.flameScale * flicker;
       f.scale.set(0.7 + s * 0.7, 0.7 + s * 0.7, 0.4 + s * 2.2);
-      f.position.z = -2.3 - this.flameScale * 0.6;
+      f.position.z = this.exhaustZ - 0.05 - this.flameScale * 0.6;
       // 内核更短更细，抖得更快 —— 叠加出温度梯度
       const cs = this.flameScale * (0.85 + Math.random() * 0.3);
       core.scale.set(0.34 + cs * 0.34, 0.34 + cs * 0.34, 0.25 + cs * 1.05);
-      core.position.z = -2.26 - this.flameScale * 0.3;
+      core.position.z = this.exhaustZ - this.flameScale * 0.3;
     }
     if (vis) {
       const col = kart.boostKind === 'nitro' ? NITRO_COLOR

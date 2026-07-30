@@ -17,4 +17,7 @@ tmp/
 # 外部车模：第三方资产有授权约束，不默认进公开仓库（见 public/models/README.md）
 public/models/*.glb
 public/models/*.gltf
+# 例外：默认车身必须开箱即用，否则 clone 下来只能看到程序化车壳。
+# 1.6 MB，MIT，已在 CREDITS.md 署名。
+!public/models/ferrari.glb
 public/decoders/

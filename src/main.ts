@@ -4,12 +4,12 @@ import { GameLoop } from './core/GameLoop';
 import { Input, emptyInput, type InputState } from './core/Input';
 import { AudioEngine } from './core/Audio';
 import { Stage, type Quality } from './render/Stage';
-import { loadCarModelFromManifest, type PreparedCarModel } from './render/CarModelLoader';
+import { loadCarBody } from './render/CarModelLoader';
 import { Race, type RaceConfig } from './game/Race';
 import { TRACKS } from './track/Track';
 import { Hud, renderResults, escapeHtml } from './ui/Hud';
 import { TouchControls, isTouchDevice, requestGyroPermission, type SteerMode } from './ui/TouchControls';
-import { KART, CAR_PRESETS, DEFAULT_CAR_ID, type Difficulty } from './core/Config';
+import { KART, CAR_PRESETS, DEFAULT_CAR_ID, CAR_BODIES, DEFAULT_BODY_ID, type Difficulty } from './core/Config';
 
 // ============================================================
 // 设置
@@ -30,6 +30,8 @@ interface Settings {
   gyroRange: number;
   /** 玩家车型（漆面预设） */
   carId: string;
+  /** 玩家车身（车模） */
+  bodyId: string;
 }
 
 const SAVE_KEY = 'neon-drift/settings/v2';
@@ -41,6 +43,7 @@ function loadSettings(): Settings {
     quality: guessQuality(), audio: true,
     steerMode: 'wheel', autoThrottle: false, gyroRange: 26,
     carId: DEFAULT_CAR_ID,
+    bodyId: DEFAULT_BODY_ID,
   };
   try {
     const raw = localStorage.getItem(SAVE_KEY);
@@ -56,6 +59,7 @@ function loadSettings(): Settings {
       steerMode: s.steerMode === 'gyro' ? 'gyro' : def.steerMode,
       gyroRange: [18, 26, 34].includes(s.gyroRange as number) ? s.gyroRange! : def.gyroRange,
       carId: CAR_PRESETS.some((c) => c.id === s.carId) ? s.carId! : def.carId,
+      bodyId: CAR_BODIES.some((b) => b.id === s.bodyId) ? s.bodyId! : def.bodyId,
     };
   } catch {
     return def;
@@ -207,13 +211,12 @@ function sampleLoopInput(dt: number): void {
 loop.start();
 
 // ============================================================
-// 外部车模（可选）
+// 外部车模
 // ============================================================
-// 仓库里默认不带车模 —— 第三方资产有授权约束，不适合直接进公开仓库。
-// 把 .glb 放到 public/models/ 并在 manifest.json 里指向它就会生效，
-// 没配就用程序化车模。详见 public/models/README.md。
-let carModel: PreparedCarModel | null = null;
-const carModelReady = loadCarModelFromManifest(stage.renderer).then((m) => { carModel = m; });
+// **按需加载**：只下玩家选中的那台车身。全部预加载的话首屏要拖 12+ MB，
+// 而玩家一局只开一台车。loadCarBody 内部缓 Promise，重复调用不会重复下载。
+// 这里先预热一把，多数情况下玩家把菜单点完就已经下完了。
+void loadCarBody(settings.bodyId, stage.renderer);
 
 // ============================================================
 // 比赛生命周期
@@ -226,10 +229,10 @@ function startRace(): void {
 
   // 让浏览器先画出 loading，再做重活
   requestAnimationFrame(() => setTimeout(async () => {
-    // 车模是十几 MB 的 glb，页面刚打开就点"开始比赛"时往往还没下完。
+    // 车模是几 MB 的 glb，页面刚打开就点"开始比赛"时往往还没下完。
     // 不等的话首局会静静地退回程序化车模，第二局才变好看——
     // 玩家只会觉得"怎么不一样"。loading 遮罩已经在显示了，在这等一下是免费的。
-    await carModelReady;
+    const carModel = await loadCarBody(settings.bodyId, stage.renderer);
     disposeRace();
     const cfg: RaceConfig = {
       trackId: settings.trackId,
@@ -372,6 +375,32 @@ function buildCarPicker(): void {
   }
 }
 
+/**
+ * 车身选择。
+ * 选中后立刻开始预热下载 —— 玩家挑完车身通常还要挑涂装/赛道，
+ * 这段时间足够把几 MB 的 glb 拉完，点"开始比赛"时就不用等了。
+ */
+function buildBodyPicker(): void {
+  const box = document.getElementById('body-picker');
+  if (!box) return;
+  box.innerHTML = '';
+  for (const bd of CAR_BODIES) {
+    const b = document.createElement('button');
+    b.className = 'chip car-chip' + (bd.id === settings.bodyId ? ' active' : '');
+    b.dataset.body = bd.id;
+    b.innerHTML = `<span>${escapeHtml(bd.name)}<small>${escapeHtml(bd.desc)}</small></span>`;
+    b.onclick = () => {
+      settings.bodyId = bd.id;
+      saveSettings(settings);
+      box.querySelectorAll('.chip').forEach((x) => x.classList.remove('active'));
+      b.classList.add('active');
+      audio.ui();
+      void loadCarBody(bd.id, stage.renderer);
+    };
+    box.appendChild(b);
+  }
+}
+
 function bindPicker(id: string, key: keyof Settings, attr: string, parse: (v: string) => unknown, after?: () => void): void {
   const box = document.getElementById(id);
   if (!box) return;
@@ -395,6 +424,7 @@ function bindPicker(id: string, key: keyof Settings, attr: string, parse: (v: st
 
 buildTrackPicker();
 buildCarPicker();
+buildBodyPicker();
 bindPicker('laps-picker', 'laps', 'laps', (v) => Number(v));
 bindPicker('ai-picker', 'aiCount', 'ai', (v) => Number(v));
 bindPicker('diff-picker', 'difficulty', 'diff', (v) => v);

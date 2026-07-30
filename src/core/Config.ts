@@ -220,10 +220,9 @@ export const RACER_COLORS = [
 /**
  * 玩家可选车型。
  *
- * 只有一个 glTF 车体，靠车漆做区分——每加一台真车模就多十几 MB 首包，
- * 而"换车"这件事玩家感知到的九成是外观。所以这里换的是漆面：
- * 底色 + 金属度 + 粗糙度 + 清漆，四个参数就能拉开"糖果漆 / 珠光 / 哑光 / 碳纤"
- * 这些差别很大的质感，零额外下载。
+ * 外观是「车身」×「涂装」两个独立维度：车身决定剪影（车顶线、宽度、离地），
+ * 涂装决定质感（底色 + 金属度 + 粗糙度 + 清漆）。
+ * 分开是因为两者的成本差了三个数量级——涂装零下载，车身每台几 MB 首包。
  */
 export interface CarPreset {
   id: string;
@@ -247,6 +246,28 @@ export const CAR_PRESETS: CarPreset[] = [
 ];
 
 export const DEFAULT_CAR_ID = CAR_PRESETS[0].id;
+
+/**
+ * 可选车身。
+ *
+ * `file` 是 public/models/ 下的文件名；null 表示用程序化车模（零下载）。
+ * 车身是**按需加载**的：只有被选中的那台会下载，切回来时走缓存。
+ * 所以这里多挂几台不会拖慢首屏——首包只含被选中的那一台。
+ */
+export interface CarBody {
+  id: string;
+  name: string;
+  desc: string;
+  file: string | null;
+}
+
+export const CAR_BODIES: CarBody[] = [
+  { id: 'gt', name: '超跑', desc: '低趴宽体 · 1.6 MB', file: 'ferrari.glb' },
+  { id: 'concept', name: '概念车', desc: '未来感 · 11 MB', file: 'car.glb' },
+  { id: 'proto', name: '原型车', desc: '程序化霓虹 · 免下载', file: null },
+];
+
+export const DEFAULT_BODY_ID = CAR_BODIES[0].id;
 
 export const RACER_NAMES = [
   '闪电狼', '夜行者', '涡轮猫', '赤焰',

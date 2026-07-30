@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
 import { KTX2Loader } from 'three/examples/jsm/loaders/KTX2Loader.js';
+import { CAR_BODIES } from '../core/Config';
 
 /**
  * 外部车模（glTF/glb）加载管线。
@@ -104,19 +105,33 @@ function wheelSlot(name: string): Slot | null {
 /**
  * 收集四个车轮。
  *
- * 同一个槽位往往会匹配到一串节点（WheelFrontL / WheelFrontLRim /
- * WheelFrontLBrakeDisc …）。取名字最短的那个——它是父节点，转它会带着轮辋和
- * 刹车盘一起转；转子节点的话轮辋转了轮胎不动。
+ * 同一个槽位往往会匹配到一串节点（wheel_fl / rim_fl / …）。要的是**父节点**：
+ * 转它会带着轮辋和刹车盘一起转；转子节点的话轮辋转了轮胎不动。
  *
- * 四个轮子没凑齐就整个放弃：宁可不转，也不能把左前轮的旋转套到右后轮上。
+ * 判据用**层级深度**，不用名字长度。两个真实模型给出了相反的命名习惯：
+ *   CarConcept: WheelFrontL(父) / WheelFrontLRim(子)  → 父节点名字更短
+ *   ferrari:    wheel_fl(父)   / rim_fl(子)          → 父节点名字更**长**
+ * 深度则在两者上都成立。同深度平手时才退回比名字长度。
+ *
+ * 四个轮子没凑齐就整个放弃：宁可不转，也不能把左前轮的旋转套到右后轮。
  */
 function collectWheels(root: THREE.Object3D): THREE.Object3D[] {
+  const depthOf = (o: THREE.Object3D): number => {
+    let d = 0;
+    for (let p = o.parent; p && p !== root.parent; p = p.parent) d++;
+    return d;
+  };
   const best: Array<THREE.Object3D | null> = [null, null, null, null];
+  const bestDepth = [Infinity, Infinity, Infinity, Infinity];
   root.traverse((o) => {
     const slot = wheelSlot(o.name);
     if (slot === null) return;
+    const d = depthOf(o);
     const cur = best[slot];
-    if (!cur || o.name.length < cur.name.length) best[slot] = o;
+    if (!cur || d < bestDepth[slot] || (d === bestDepth[slot] && o.name.length < cur.name.length)) {
+      best[slot] = o;
+      bestDepth[slot] = d;
+    }
   });
   return best.every((w) => w) ? (best as THREE.Object3D[]) : [];
 }
@@ -140,26 +155,26 @@ export async function loadCarModel(
 }
 
 /**
- * 按 public/models/manifest.json 里的开关决定要不要加载车模。
+ * 按车身 id 加载，结果缓存。
  *
- * 用清单而不是直接去 fetch car.glb：车模默认不存在，直接请求会让每个玩家的
- * 控制台都躺着一条 404 红字。清单文件是提交进仓库的，一定存在。
+ * 缓存的是 **Promise** 而不是结果：玩家在车库里来回点很容易在同一台车上
+ * 发出多次加载，缓 Promise 才能把并发请求合并成一次下载。
+ * 没配文件（file=null）或加载失败都返回 null → 退回程序化车模。
  */
-export async function loadCarModelFromManifest(
+const bodyCache = new Map<string, Promise<PreparedCarModel | null>>();
+
+export function loadCarBody(
+  id: string,
   renderer: THREE.WebGLRenderer,
 ): Promise<PreparedCarModel | null> {
-  const base = baseUrl();
-  let file: string | null = null;
-  try {
-    const res = await fetch(`${base}models/manifest.json`, { cache: 'no-cache' });
-    if (!res.ok) return null;
-    const manifest = (await res.json()) as { car?: string | null };
-    file = manifest.car ?? null;
-  } catch {
-    return null; // 清单读不到就当没配车模，静默走程序化
-  }
-  if (!file) return null;
-  return loadCarModel(`${base}models/${file}`, renderer);
+  const cached = bodyCache.get(id);
+  if (cached) return cached;
+  const body = CAR_BODIES.find((b) => b.id === id);
+  const p: Promise<PreparedCarModel | null> = body?.file
+    ? loadCarModel(`${baseUrl()}models/${body.file}`, renderer)
+    : Promise.resolve(null);
+  bodyCache.set(id, p);
+  return p;
 }
 
 function prepare(raw: THREE.Object3D): PreparedCarModel {
@@ -178,6 +193,20 @@ function prepare(raw: THREE.Object3D): PreparedCarModel {
 
   // 车更长的那个轴当作车身纵向；如果模型是朝 X 的，转 90° 摆正到 +Z
   if (size.x > size.z) raw.rotation.y = Math.PI / 2;
+
+  // 上一步只把纵轴摆正，没解决**朝哪头**。glTF 的通行约定是车头朝 -Z，
+  // 而我们的物理约定是车头朝 +Z——直接用会倒着开。
+  // 靠轮位判别：前轮组的 Z 应该比后轮组大，不然就是反的，补 180°。
+  // 用轮子而不是"尾灯在哪"之类的启发式，是因为轮子已经被 wheelSlot 按名字
+  // 严格分好前后了，不用再猜。轮子没凑齐（模型不带命名）就维持原样。
+  const probe = collectWheels(raw);
+  if (probe.length === 4) {
+    raw.updateMatrixWorld(true);
+    const wz = probe.map((w) => w.getWorldPosition(new THREE.Vector3()).z);
+    const frontZ = (wz[0] + wz[1]) / 2;
+    const rearZ = (wz[2] + wz[3]) / 2;
+    if (frontZ < rearZ) raw.rotation.y += Math.PI;
+  }
 
   // 重新量一次（缩放和旋转之后），把原点挪到车底中心
   const box2 = new THREE.Box3().setFromObject(raw);

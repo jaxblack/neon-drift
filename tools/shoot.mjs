@@ -64,7 +64,7 @@ for (const shot of SHOTS) {
       },
       [shot.track, Number(AI)],
     );
-    await page.waitForFunction(() => window.__neon?.race, null, { timeout: 40000 });
+    await page.waitForFunction(() => window.__neon?.race, null, { timeout: 120000 });
     await page.evaluate(() => {
       window.__neon.race.autopilot = true;
     });

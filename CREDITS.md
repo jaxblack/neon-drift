@@ -7,17 +7,19 @@
 
 ## 车模
 
-<!--
-放进 public/models/car.glb 之后在这里加一行，格式：
-
 | 资产 | 作者 | 来源 | 许可 |
 | --- | --- | --- | --- |
-| Some Car | Author Name | https://sketchfab.com/3d-models/... | CC BY 4.0 |
+| Car Concept | © 2024 Darmstadt Graphics Group GmbH；模型与贴图作者 Eric Chadwick | [KhronosGroup/glTF-Sample-Assets](https://github.com/KhronosGroup/glTF-Sample-Assets/tree/main/Models/CarConcept) | [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/legalcode) |
 
-CC0 资产严格来说不需要署名，但登记一下便于日后追溯来源。
--->
+补充说明：
 
-_暂无 —— 当前使用程序化车模。_
+- 该资产改编自 Unity Fan 发布的 **CC0（公共领域）** 概念车模型。
+  它是**原创概念车，不是任何真实车型的复刻**，因此不涉及车厂的商标或外观设计权。
+- 模型车尾牌照及方向盘上带有 **Khronos / 3D Commerce 徽标**。按上游 README，
+  这些属于 "Khronos Trademark or Logo"（不受版权保护的徽标），随资产一同分发。
+- 本项目未修改该资产的几何，仅在运行时做了归一化（等比缩放、贴地、朝向）、
+  按阵营色替换车漆材质颜色、隐藏内饰网格以降低 draw call。
+- 文件本身不入库（见 `.gitignore`），由 `public/models/manifest.json` 开关启用。
 
 ## 贴图 / HDRI
 
@@ -27,3 +29,4 @@ _暂无 —— 当前全部为程序化生成。_
 
 - [ambientCG](https://ambientcg.com/) — PBR 材质、HDRI
 - [Poly Haven](https://polyhaven.com/) — HDRI、材质、模型（无车辆分类）
+- [Khronos glTF-Sample-Assets](https://github.com/KhronosGroup/glTF-Sample-Assets) — 逐资产标注许可，CC0 / CC-BY 混合

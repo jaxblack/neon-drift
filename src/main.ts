@@ -209,7 +209,7 @@ loop.start();
 // 把 .glb 放到 public/models/ 并在 manifest.json 里指向它就会生效，
 // 没配就用程序化车模。详见 public/models/README.md。
 let carModel: PreparedCarModel | null = null;
-void loadCarModelFromManifest(stage.renderer).then((m) => { carModel = m; });
+const carModelReady = loadCarModelFromManifest(stage.renderer).then((m) => { carModel = m; });
 
 // ============================================================
 // 比赛生命周期
@@ -221,7 +221,11 @@ function startRace(): void {
   pause.classList.add('hidden');
 
   // 让浏览器先画出 loading，再做重活
-  requestAnimationFrame(() => setTimeout(() => {
+  requestAnimationFrame(() => setTimeout(async () => {
+    // 车模是十几 MB 的 glb，页面刚打开就点"开始比赛"时往往还没下完。
+    // 不等的话首局会静静地退回程序化车模，第二局才变好看——
+    // 玩家只会觉得"怎么不一样"。loading 遮罩已经在显示了，在这等一下是免费的。
+    await carModelReady;
     disposeRace();
     const cfg: RaceConfig = {
       trackId: settings.trackId,

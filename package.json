@@ -10,6 +10,7 @@
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
     "fetch-decoders": "node tools/fetch-decoders.mjs",
+    "fetch-car": "node tools/fetch-car.mjs",
     "server": "node server/index.mjs"
   },
   "dependencies": {

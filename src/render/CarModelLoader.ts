@@ -59,12 +59,61 @@ async function getLoader(renderer: THREE.WebGLRenderer): Promise<GLTFLoader> {
   return loaderPromise;
 }
 
-const WHEEL_ORDER: Array<[RegExp, RegExp]> = [
-  [/fl|front.*left|left.*front/i, /wheel|tire|tyre|rim/i],
-  [/fr|front.*right|right.*front/i, /wheel|tire|tyre|rim/i],
-  [/rl|rear.*left|left.*rear|bl|back.*left/i, /wheel|tire|tyre|rim/i],
-  [/rr|rear.*right|right.*rear|br|back.*right/i, /wheel|tire|tyre|rim/i],
-];
+/** 车轮槽位：0=前左 1=前右 2=后左 3=后右 */
+type Slot = 0 | 1 | 2 | 3;
+
+/**
+ * 从节点名判断这是哪个轮子。
+ *
+ * 两个必须小心的地方（都是在 Khronos CarConcept 上实测踩到的）：
+ *   1. FL/FR/RL/RR 两字母代号必须要求前后不是字母。否则 "WheelFrontL" 里
+ *      "Front" 的 fr 会命中，左前轮被判成右前轮。
+ *   2. 方向盘（SteeringWheel）名字里也有 wheel，要排掉。
+ */
+function wheelSlot(name: string): Slot | null {
+  if (!name || !/wheel|tire|tyre|rim/i.test(name)) return null;
+  if (/steer/i.test(name)) return null;
+  const n = name.toLowerCase();
+
+  let lon: 'f' | 'r' | null = /front/.test(n) ? 'f' : /rear|back/.test(n) ? 'r' : null;
+  let lat: 'l' | 'r' | null = /left/.test(n) ? 'l' : /right/.test(n) ? 'r' : null;
+
+  // WheelFrontL / Wheel_Rear_R 这种在 front/rear 后面直接跟单字母的写法
+  if (lon && !lat) {
+    const m = /(?:front|rear|back)[_\- ]?([lr])(?![a-z])/.exec(n);
+    if (m) lat = m[1] as 'l' | 'r';
+  }
+  // FL/FR/RL/RR 代号
+  if (!lon || !lat) {
+    const m = /(?<![a-z])([fr])([lr])(?![a-z])/.exec(n);
+    if (m) {
+      lon = lon ?? (m[1] as 'f' | 'r');
+      lat = lat ?? (m[2] as 'l' | 'r');
+    }
+  }
+  if (!lon || !lat) return null;
+  return ((lon === 'f' ? 0 : 2) + (lat === 'l' ? 0 : 1)) as Slot;
+}
+
+/**
+ * 收集四个车轮。
+ *
+ * 同一个槽位往往会匹配到一串节点（WheelFrontL / WheelFrontLRim /
+ * WheelFrontLBrakeDisc …）。取名字最短的那个——它是父节点，转它会带着轮辋和
+ * 刹车盘一起转；转子节点的话轮辋转了轮胎不动。
+ *
+ * 四个轮子没凑齐就整个放弃：宁可不转，也不能把左前轮的旋转套到右后轮上。
+ */
+function collectWheels(root: THREE.Object3D): THREE.Object3D[] {
+  const best: Array<THREE.Object3D | null> = [null, null, null, null];
+  root.traverse((o) => {
+    const slot = wheelSlot(o.name);
+    if (slot === null) return;
+    const cur = best[slot];
+    if (!cur || o.name.length < cur.name.length) best[slot] = o;
+  });
+  return best.every((w) => w) ? (best as THREE.Object3D[]) : [];
+}
 
 /**
  * 加载并归一化一个车模。失败一律返回 null（调用方退回程序化车模）。
@@ -132,50 +181,63 @@ function prepare(raw: THREE.Object3D): PreparedCarModel {
   raw.position.z -= center.z;
   raw.position.y -= box2.min.y;
 
-  // ---- 收集轮子和车漆材质 ----
-  const wheels: Array<THREE.Object3D | undefined> = [undefined, undefined, undefined, undefined];
+  // ---- 收集车漆材质 + 决定谁投影 ----
   const paintMaterials: THREE.MeshStandardMaterial[] = [];
   const seenPaint = new Set<THREE.Material>();
 
+  // 一台写实车模有近百个网格（螺丝、内饰、刹车卡钳……）。
+  // 八台车全量投影 = 900+ 个 shadow caster，阴影 pass 要把它们全部重画一遍，
+  // 实测帧率从 60 掉到 36。按尺寸阈值筛还剩 624 个、45 fps，依然不够。
+  //
+  // 改成硬上限：每台车只取体积最大的 N 个网格投影。这样 caster 数量是有界的
+  // （8 车 × 14 = 112），而车身板件和四个轮子必然在这 N 个里面——
+  // 阴影里真正能分辨出来的就是它们，内饰和小五金投不投完全看不出区别。
+  const MAX_CASTERS_PER_CAR = 14;
+  // 写实车模会把内饰完整建出来（仪表台、座椅、踏板、方向盘…），
+  // 在这台车上占了 97 个网格里的 42 个。但这是追尾视角的街机赛车，
+  // 隔着一块深色风挡、八台车同屏，内饰一帧都看不清，却要吃掉 8×42=336 次 draw call。
+  // 直接整体隐藏。想看内饰的话把这个正则清空即可。
+  const HIDE_INTERIOR = /interior|dash|floormat|seat|pedal|steering/i;
+  raw.updateMatrixWorld(true);
+  const bb = new THREE.Box3();
+  const sz = new THREE.Vector3();
+  const sized: Array<{ mesh: THREE.Mesh; size: number }> = [];
+
   raw.traverse((o) => {
-    if (!(o as THREE.Mesh).isMesh) {
-      // 轮子经常是空节点带子网格，所以节点也要匹配
-      matchWheel(o, wheels);
+    const mesh = o as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    if (HIDE_INTERIOR.test(mesh.name) || HIDE_INTERIOR.test(mesh.parent?.name ?? '')) {
+      mesh.visible = false;
       return;
     }
-    const mesh = o as THREE.Mesh;
-    mesh.castShadow = true;
+    mesh.geometry.computeBoundingBox();
+    bb.copy(mesh.geometry.boundingBox!).applyMatrix4(mesh.matrixWorld);
+    bb.getSize(sz);
+    sized.push({ mesh, size: sz.x * sz.y + sz.y * sz.z + sz.z * sz.x }); // 表面积近似
+    mesh.castShadow = false;
     mesh.receiveShadow = true;
-    matchWheel(mesh, wheels);
 
     for (const m of materialsOf(mesh)) {
       if (!(m as THREE.MeshStandardMaterial).isMeshStandardMaterial) continue;
       const std = m as THREE.MeshStandardMaterial;
       // 统一给外部材质补上环境反射强度，否则在我们这套夜景里会偏暗
       std.envMapIntensity = Math.max(std.envMapIntensity, 1.4);
-      if (/body|paint|carpaint|car_paint|shell/i.test(std.name) && !seenPaint.has(std)) {
+      if (/body|paint|carpaint|car_paint|shell/i.test(std.name ?? '') && !seenPaint.has(std)) {
         seenPaint.add(std);
         paintMaterials.push(std);
       }
     }
   });
 
+  sized.sort((a, b) => b.size - a.size);
+  for (const s of sized.slice(0, MAX_CASTERS_PER_CAR)) s.mesh.castShadow = true;
+
   return {
     scene,
-    wheels: wheels.filter((w): w is THREE.Object3D => !!w),
+    wheels: collectWheels(raw),
     paintMaterials,
     scale,
   };
-}
-
-function matchWheel(o: THREE.Object3D, out: Array<THREE.Object3D | undefined>): void {
-  const name = o.name;
-  if (!name || !/wheel|tire|tyre|rim/i.test(name)) return;
-  for (let i = 0; i < WHEEL_ORDER.length; i++) {
-    if (out[i]) continue;
-    const [posRe, kindRe] = WHEEL_ORDER[i];
-    if (posRe.test(name) && kindRe.test(name)) { out[i] = o; return; }
-  }
 }
 
 function materialsOf(mesh: THREE.Mesh): THREE.Material[] {
@@ -195,8 +257,8 @@ export function instantiate(prepared: PreparedCarModel, color: THREE.Color): {
   scene.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (!mesh.isMesh) return;
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
+    // castShadow 在 prepare() 里已经按尺寸决定好了，clone 会继承，别在这里覆盖成 true——
+    // 那样等于把筛选白做了，八台车又变回 900+ 个 caster。
     const mats = materialsOf(mesh);
     const next = mats.map((m) => {
       if (!paintNames.has(m.name)) return m; // 非车漆部分共享，省显存
@@ -211,7 +273,5 @@ export function instantiate(prepared: PreparedCarModel, color: THREE.Color): {
   });
 
   // clone 之后要按名字重新找轮子，原来的引用指向的是模板
-  const wheels: Array<THREE.Object3D | undefined> = [undefined, undefined, undefined, undefined];
-  scene.traverse((o) => matchWheel(o, wheels));
-  return { scene, wheels: wheels.filter((w): w is THREE.Object3D => !!w) };
+  return { scene, wheels: collectWheels(scene) };
 }
